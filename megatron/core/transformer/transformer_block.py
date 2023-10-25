@@ -7,7 +7,7 @@ import torch
 
 from megatron.core import parallel_state, tensor_parallel
 from megatron.core.fusions.fused_layer_norm import FusedLayerNorm
-from megatron.core.transformer.custom_layers.transformer_engine import TENorm
+# from megatron.core.transformer.custom_layers.transformer_engine import TENorm
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
@@ -108,17 +108,18 @@ class TransformerBlock(MegatronModule):
         # else:
         #     self.layers = torch.nn.ModuleList([build_layer(i + 1 + offset) for i in range(self.num_layers)])
 
-        if self.post_process and self.post_layer_norm:
-            # Final layer norm before output.
-            self.final_layernorm = TENorm(
-                config=self.config,
-                hidden_size=self.config.hidden_size,
-                eps=self.config.layernorm_epsilon,
-                persist_layer_norm=self.config.persist_layer_norm,
-                sequence_parallel=self.config.sequence_parallel,
-                zero_centered_gamma=self.config.layernorm_zero_centered_gamma,
-                normalization=self.config.normalization,
-            )
+        # # Annotation for not using TransformerEngine
+        # if self.post_process and self.post_layer_norm:
+        #     # Final layer norm before output.
+        #     self.final_layernorm = TENorm(
+        #         config=self.config,
+        #         hidden_size=self.config.hidden_size,
+        #         eps=self.config.layernorm_epsilon,
+        #         persist_layer_norm=self.config.persist_layer_norm,
+        #         sequence_parallel=self.config.sequence_parallel,
+        #         zero_centered_gamma=self.config.layernorm_zero_centered_gamma,
+        #         normalization=self.config.normalization,
+        #     )
 
     def _get_layer(self, layer_number):
         return self.layers[layer_number]
@@ -259,10 +260,10 @@ class TransformerBlock(MegatronModule):
                         rotary_pos_emb=rotary_pos_emb,
                         inference_params=inference_params,
                     )
-
-        # Final layer norm.
-        if self.post_process and self.post_layer_norm:
-            hidden_states = self.final_layernorm(hidden_states)
+        # # Annotation for not using TransformerEngine
+        # # Final layer norm.
+        # if self.post_process and self.post_layer_norm:
+        #     hidden_states = self.final_layernorm(hidden_states)
 
         return hidden_states
 
