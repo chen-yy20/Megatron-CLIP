@@ -5,7 +5,7 @@
 from abc import ABC
 from abc import abstractmethod
 from apex.multi_tensor_apply import multi_tensor_applier
-import amp_C
+# import amp_C
 import torch
 
 from megatron import get_timers

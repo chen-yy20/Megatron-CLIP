@@ -359,6 +359,7 @@ class VisionTransformer(nn.Module):
             self.conv1 = nn.Linear(patch_input_dim, width)
         else:
             self.patchnorm_pre_ln = nn.Identity()
+            # outchannels就是168，也就是说，每个patch都是一个168维的向量,一共196个patch
             self.conv1 = nn.Conv2d(in_channels=3, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
 
         # class embeddings and positional embeddings
@@ -451,8 +452,15 @@ class VisionTransformer(nn.Module):
 
     def _global_pool(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         if self.global_average_pool:
+            # 平均值池化
             return x.mean(dim=1), x
         else:
+            '''
+            在这种模式下，x 中的每个样本被假设包含两部分：第一个元素是特定的值，而剩余的元素构成其余特征。
+            方法返回一个元组，第一个元素是 x 中每个样本的第一个元素，即 x[:, 0]。这个元素通常被视为某种特殊的值。
+            第二个元素是 x 中每个样本的其余部分，即 x[:, 1:]。这个部分包含了除第一个元素之外的所有特征。
+            第一个元素就是分类结果，第二个元素就是特征向量
+            '''
             return x[:, 0], x[:, 1:]
 
     def forward(self, x: torch.Tensor):
@@ -467,6 +475,7 @@ class VisionTransformer(nn.Module):
             x = self.conv1(x)
         else:
             x = self.conv1(x)  # shape = [*, width, grid, grid]
+            # 将conv生成的patch变回输入的形状
             x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
             x = x.permute(0, 2, 1)  # shape = [*, grid ** 2, width]
 
@@ -490,6 +499,7 @@ class VisionTransformer(nn.Module):
             pooled, tokens = self._global_pool(x)
         else:
             pooled, tokens = self._global_pool(x)
+            # 后层归一化
             pooled = self.ln_post(pooled)
 
         if self.proj is not None:
@@ -497,7 +507,7 @@ class VisionTransformer(nn.Module):
 
         if self.output_tokens:
             return pooled, tokens
-        
+        # pooled是分类结果，tokens是特征向量
         return pooled
 
 

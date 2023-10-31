@@ -573,7 +573,7 @@ class ParallelAttention(MegatronModule):
                 causal=True, attention_dropout=config.attention_dropout
             )
 
-        # Output.
+        # Output. 输出的时候使用行切割的线性层
         self.dense = tensor_parallel.RowParallelLinear(
             query_projection_size,
             config.hidden_size,

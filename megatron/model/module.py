@@ -20,7 +20,7 @@ def param_is_not_shared(param):
     return not hasattr(param, 'shared') or not param.shared
 
 
-
+# megatronmodule继承自torch.nn.Module
 class MegatronModule(torch.nn.Module):
     """Megatron specific extensions of torch Module with support
     for pipelining."""
@@ -28,12 +28,14 @@ class MegatronModule(torch.nn.Module):
     def __init__(self, config=None, share_embeddings_and_output_weights=True):
         super(MegatronModule, self).__init__()
         self.config = config
+        # 唯一特有的属性是将embeddings和output weights共享
         self.share_embeddings_and_output_weights = share_embeddings_and_output_weights
 
 
     def state_dict_for_save_checkpoint(self, prefix='', keep_vars=False):
         """Use this function to override the state dict for
         saving checkpoints."""
+        # 及时将参数保存到某一个检查点
         return self.state_dict(prefix=prefix, keep_vars=keep_vars)
 
 
@@ -42,12 +44,14 @@ class MegatronModule(torch.nn.Module):
             return self.language_model.embedding.word_embeddings.weight
         else:
             if not self.share_embeddings_and_output_weights:
+                # 强制要求共享一套embedding
                 raise Exception('shared_embedding_or_output_weight() called for last '
                                 'stage, but share_embeddings_and_output_weights is false')
             return self.word_embeddings.weight
 
 
     def initialize_word_embeddings(self):
+        # 强制PP组的最后一个进程初始化Embedding时，直接使用第一个进程的Word Embedding
         args = get_args()
         if not self.share_embeddings_and_output_weights:
             raise Exception('initialize_word_embeddings() was called but '
@@ -56,6 +60,7 @@ class MegatronModule(torch.nn.Module):
         # This function just initializes the word embeddings in the final stage
         # when we are using pipeline parallelism. Nothing to do if we aren't
         # using pipeline parallelism.
+        # 只有在使用pipeline并行时才会初始化word embedding
         if args.pipeline_model_parallel_size == 1:
             return
 
@@ -101,12 +106,14 @@ class MegatronModule(torch.nn.Module):
         # Ensure that first and last stages have the same initial parameter
         # values.
         if mpu.is_rank_in_embedding_group():
+            # allreduce的参数：被处理的tensor，group
             torch.distributed.all_reduce(self.shared_embedding_or_output_weight().data,
                                          group=mpu.get_embedding_group())
 
         # Ensure that encoder(first stage) and decoder(split stage) position
         # embeddings have the same initial parameter values
         # NOTE: We don't currently support T5 with the interleaved schedule.
+        # position Embedding 也要进行初始化
         if mpu.is_rank_in_position_embedding_group() and \
                 args.pipeline_model_parallel_split_rank is not None:
             # TODO: Support tokentype embedding.

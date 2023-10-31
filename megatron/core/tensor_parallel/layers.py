@@ -96,7 +96,7 @@ def _initialize_affine_weight_gpu(
         with get_cuda_rng_tracker().fork(get_expert_parallel_rng_tracker_name()):
             init_method(weight)
 
-
+# 组建master权重
 def _initialize_affine_weight_cpu(
     weight,
     output_size,
@@ -113,30 +113,35 @@ def _initialize_affine_weight_cpu(
 
     Build the master weight on all processes and scatter
     the relevant chunk."""
-
+    # 设置张量的模型并行属性，包括将张量标记为并行张量、指定张量分区的维度（partition_dim）以及步长（stride）。
     set_tensor_model_parallel_attributes(
         tensor=weight, is_parallel=True, dim=partition_dim, stride=stride
     )
 
     # Initialize master weight
     master_weight = torch.empty(output_size, input_size, dtype=torch.float, requires_grad=False)
+    # 按照设定好的初始化方法初始化master_weight
     init_method(master_weight)
     master_weight = master_weight.to(dtype=params_dtype)
 
     # Split and copy
     per_partition_per_stride_size = divide(per_partition_size, stride)
+    # 沿着partition_dim维度按照per_partition_per_stride_size的大小切分master_weight
     weight_list = torch.split(master_weight, per_partition_per_stride_size, dim=partition_dim)
     rank = get_tensor_model_parallel_rank()
     world_size = get_tensor_model_parallel_world_size()
+    # 步长为world_size，将master_weight切分成world_size份
     my_weight_list = weight_list[rank::world_size]
 
     with torch.no_grad():
+        # 将切分好的master_weight拷贝到当前进程的weight中
         torch.cat(my_weight_list, dim=partition_dim, out=weight)
     if return_master_weight:
         return master_weight
     return None
 
-
+# 这次是真的触及到了tensor parallel的核心代码了
+# 沿着词汇表的维度对Embedding层进行切分，每个GPU负责一部分词汇表
 class VocabParallelEmbedding(torch.nn.Module):
     """Embedding parallelized in the vocabulary dimension.
 
@@ -160,8 +165,8 @@ class VocabParallelEmbedding(torch.nn.Module):
     ):
         super(VocabParallelEmbedding, self).__init__()
         # Keep the input dimensions.
-        self.num_embeddings = num_embeddings
-        self.embedding_dim = embedding_dim
+        self.num_embeddings = num_embeddings # vocab size
+        self.embedding_dim = embedding_dim # hidden size
         self.tensor_model_parallel_size = get_tensor_model_parallel_world_size()
         # Divide the weight matrix along the vocaburaly dimension.
         (
@@ -169,16 +174,18 @@ class VocabParallelEmbedding(torch.nn.Module):
             self.vocab_end_index,
         ) = VocabUtility.vocab_range_from_global_vocab_size(
             self.num_embeddings, get_tensor_model_parallel_rank(), self.tensor_model_parallel_size
-        )
+        ) # 计算当前进程维护的词汇表的起始和终止索引
         self.num_embeddings_per_partition = self.vocab_end_index - self.vocab_start_index
 
         # Allocate weights and initialize.
         if config.use_cpu_initialization:
+            # 在CPU上初始化，则生成一个完整的WE
             self.weight = Parameter(
                 torch.empty(
                     self.num_embeddings_per_partition, self.embedding_dim, dtype=config.params_dtype
                 )
             )
+            # 对WE做切割，至少初始化了权重
             if config.perform_initialization:
                 _initialize_affine_weight_cpu(
                     self.weight,
@@ -190,6 +197,7 @@ class VocabParallelEmbedding(torch.nn.Module):
                     params_dtype=config.params_dtype,
                 )
         else:
+            # 在GPU上初始化，则生成一个分片的WE
             self.weight = Parameter(
                 torch.empty(
                     self.num_embeddings_per_partition,
@@ -199,10 +207,12 @@ class VocabParallelEmbedding(torch.nn.Module):
                 )
             )
             if config.perform_initialization:
+                # 没太明白除了初始化还干了什么
                 _initialize_affine_weight_gpu(self.weight, init_method, partition_dim=0, stride=1)
 
     def forward(self, input_):
         if self.tensor_model_parallel_size > 1:
+            # 当前词表中找不到对应的单词，就用0代替
             # Build the mask.
             input_mask = (input_ < self.vocab_start_index) | (input_ >= self.vocab_end_index)
             # Mask the input.
@@ -216,6 +226,12 @@ class VocabParallelEmbedding(torch.nn.Module):
         if self.tensor_model_parallel_size > 1:
             output_parallel[input_mask, :] = 0.0
         # Reduce across all the model parallel GPUs.
+        # 这里的reduce是指将所有GPU上的output_parallel相加，得到最终的output，所有GPU上的output都是一样的
+
+
+
+
+        
         output = reduce_from_tensor_model_parallel_region(output_parallel)
         return output
 

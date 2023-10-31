@@ -90,7 +90,6 @@ def train_one_epoch_deepspeed_pipeline(engine, data, epoch, args):
         loss = engine.train_batch(data_iter=data_iterator)
             # prof.step()
     
-
 def train_one_epoch_deepspeed(engine, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=None):
     device = torch.device(args.device)
     autocast = get_autocast(args.precision)
@@ -260,6 +259,81 @@ def train_one_epoch_deepspeed(engine, data, loss, epoch, optimizer, scaler, sche
             batch_time_m.reset()
             data_time_m.reset()
             # end for
+
+# def train_step(forward_step_func, data_iterator,
+#                model, optimizer, opt_param_scheduler, config):
+#     """Single training step."""
+#     args = get_args()
+#     for partition in model:
+#         partition.zero_grad_buffer()
+#     optimizer.zero_grad()
+#     # get forward backward func
+#     pipeline_model_parallel_size = parallel_state.get_pipeline_model_parallel_world_size()
+#     if pipeline_model_parallel_size > 1:
+#         # ignore virtual pipeline
+#         forward_backward_func = forward_backward_pipelining_without_interleaving
+#     else:
+#         forward_backward_func = forward_backward_no_pipelining
+
+
+# def train_megatron(forward_step_func, model, optimizer, opt_param_scheduler,
+#           train_data_iterator, valid_data_iterator,
+#           process_non_loss_data_func, config):
+#     """Train the model function"""
+#     args = get_args()
+#     device = torch.device(args.device)
+#     for model_module in model:
+#         model_module.train()
+    
+#     total_loss_dict = {}
+#     iteration = args.iteration
+#     config.grad_scale_func = optimizer.scale_loss
+
+#     # Setup DDP [TODO]
+    
+#     while iteration < args.train_iters:
+#         # Start profiler
+
+#         loss_dict, skipped_iter, grad_norm, num_zero_in_grad = \
+#         train_step(forward_step_func,
+#                    train_data_iterator,
+#                    model,
+#                    optimizer,
+#                    opt_param_scheduler,
+#                    config)
+#         iteration += 1
+#         args.consumed_train_samples += mpu.get_data_parallel_world_size() * \
+#                                         args.micro_batch_size * \
+#                                         get_num_microbatches()
+#         # logging/ Autoresume/ Evaluation/ Checkpointing [TODO]
+#     return iteration
+
+
+
+# def train_one_epoch_megatron(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=None):
+#     # initialize_megatron(args)
+#     print_rank_0("Megatron is initialized.")
+#     # args = get_args() 需要轻量化的版本
+#     # 这三样针对CLIP进行特殊化
+#     model, optimizer, scheduler
+#     train_data_iterator = data['train'].dataloader
+#     # train_data_iterator, valid_data_iterator, test_data_iterator \
+#     #         = build_train_valid_test_data_iterators(
+#     #             train_valid_test_dataset_provider)
+#     print_rank_0("Dataloaders are built.")
+
+#     print_rank_0("Done with setup ...")
+#     # Train.
+#     iteration = 0
+#     iteration = train_megatron(forward_step_func,
+#                               model, optimizer, scheduler,
+#                               train_data_iterator, valid_data_iterator,
+#                               process_non_loss_data_func, config)
+#     iteration = args.iteration
+
+    
+    # ignore autocast for now
+    
 
 def train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=None):
     device = torch.device(args.device)

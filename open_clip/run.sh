@@ -8,8 +8,8 @@ set -x
 
 export NNODE=1
 export NODELIST="nico3"
-export NTASK_PER_NODE=2
-export PYTHONENV="/home/chen-yy20/venv/bin/activate"
+export NTASK_PER_NODE=4
+export PYTHONENV="/home/chen-yy20/mega_env/bin/activate"
 export TIMESTAMP=$(date "+%Y-%m-%d-%H-%M-%S")
 
 # --gres=gpu:[v116p,v132p]:$NTASK_PER_NODE # for allocate specific 32GB/16GB cards

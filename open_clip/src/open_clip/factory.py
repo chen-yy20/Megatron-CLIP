@@ -193,9 +193,11 @@ def create_model(
             else:
                 model = CustomTextCLIP(**model_cfg, cast_dtype=cast_dtype)
         else:
+            # 流水线CLIP实现
             if args.enable_flexpipe:
                 model = PipelineCLIP(**model_cfg, cast_dtype=cast_dtype, args=args)
             else:
+                # 我们先看最原始的CLIP实现
                 model = CLIP(**model_cfg, cast_dtype=cast_dtype)
 
         pretrained_loaded = False
@@ -274,8 +276,13 @@ def create_loss(args):
         world_size=args.world_size,
         use_horovod=args.horovod,
     )
+'''
+这个函数输入的参数有:
+模型名、预训练莫听命、训练精度、设备
+jit的具体作用是统计循环执行次数，然后将循环执行次数较多的部分编译成cuda代码，加速运行?
 
 
+'''
 def create_model_and_transforms(
         model_name: str,
         pretrained: Optional[str] = None,

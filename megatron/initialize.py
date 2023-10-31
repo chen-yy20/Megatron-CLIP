@@ -209,7 +209,7 @@ def _initialize_distributed():
             mpu.initialize_model_parallel(
                 args.tensor_model_parallel_size,
                 args.pipeline_model_parallel_size,
-                args.virtual_pipeline_model_parallel_size,
+                args.virtual_pipeline_model_parallel_size, # virtual PP是nvidia对megatron后续迭代的进一步优化方法
                 args.pipeline_model_parallel_split_rank,
                 expert_model_parallel_size=args.expert_model_parallel_size,
             )

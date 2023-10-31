@@ -85,7 +85,7 @@ def _build_vision_tower(
     # memory efficient in recent PyTorch releases (>= 1.10).
     # NOTE: timm models always use native GELU regardless of quick_gelu flag.
     act_layer = QuickGELU if quick_gelu else nn.GELU
-
+    # 一个储存SOTA模型的开源库，咱们不用
     if vision_cfg.timm_model_name:
         visual = TimmModel(
             vision_cfg.timm_model_name,
@@ -100,6 +100,7 @@ def _build_vision_tower(
         )
         act_layer = nn.GELU  # so that text transformer doesn't use QuickGELU w/ timm models
     elif isinstance(vision_cfg.layers, (tuple, list)):
+        # vision 头的数目
         vision_heads = vision_cfg.width * 32 // vision_cfg.head_width
         visual = ModifiedResNet(
             layers=vision_cfg.layers,
@@ -109,6 +110,7 @@ def _build_vision_tower(
             width=vision_cfg.width,
         )
     else:
+        # 咱们用VisionTransformer
         vision_heads = vision_cfg.width // vision_cfg.head_width
         norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
         visual = VisionTransformer(

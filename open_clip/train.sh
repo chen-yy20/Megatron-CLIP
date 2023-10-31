@@ -13,7 +13,7 @@ export LOCAL_RANK=$NODE_RANK
 export WORLD_SIZE=$(($NTASK_PER_NODE*$NNODE))
 export RANK=$SLURM_PROCID
 
-cd /home/chen-yy20/flexpipe/models/open_clip
+cd /home/chen-yy20/Megatron-LM/open_clip
 export PYTHONPATH="$PYTHONPATH:$PWD/src"
 
 exec python -u src/training/main.py \

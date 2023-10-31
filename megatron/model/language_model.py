@@ -57,9 +57,11 @@ def get_language_model(config, num_tokentypes, add_pooler,
     """Build language model and return along with the key to save."""
     args = get_args()
     if config.init_method is None:
+        # 设置config中的初始化方法
         config.init_method = init_method_normal(config.init_method_std)
 
     if config.output_layer_init_method is None:
+        # 经过缩放的正态分布初始化方法
         config.output_layer_init_method = scaled_init_method_normal(config.init_method_std,
                                                                     config.num_layers)
 
@@ -146,12 +148,14 @@ class Embedding(MegatronModule):
 
         args = get_args()
 
+        # 并行式地做embedding
         # Word embeddings (parallel).
         self.params_dtype = args.params_dtype
         self.word_embeddings = tensor_parallel.VocabParallelEmbedding(
             vocab_size, self.hidden_size, config=config, init_method=config.init_method)
         self._word_embeddings_key = 'word_embeddings'
 
+        # 但是position embedding是串行的
         # Position embedding (serial).
         self.add_position_embedding = args.position_embedding_type == 'learned_absolute'
         if self.add_position_embedding:
@@ -325,7 +329,7 @@ class TransformerLanguageModel(MegatronModule):
                  num_tokentypes=0,
                  add_encoder=True,
                  add_decoder=False,
-                 decoder_attn_mask_type=AttnMaskType.causal,
+                 decoder_attn_mask_type=AttnMaskType.causal, # padding和causal的区别是什么？
                  add_pooler=False,
                  pre_process=True,
                  post_process=True):
@@ -411,6 +415,7 @@ class TransformerLanguageModel(MegatronModule):
                 self._pooler_key = 'pooler'
 
             if self.untie_embeddings_and_output_weights:
+                # 在第二階段的过线性层中需要用到列切割方法
                 self.output_layer = tensor_parallel.ColumnParallelLinear(
                     args.hidden_size,
                     args.padded_vocab_size,

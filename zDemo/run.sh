@@ -11,22 +11,14 @@ set -x
 export MASTER_PORT=$(expr $RANDOM % 10000 + 10000)
 
 # export EXP_NAME=$1
-# export MODEL_NAME=$2
-# export TENSOR_PARALLEL_SIZE=$3
-# export PIPELINE_PARALLEL_SIZE=$4
-# export DATA_PARALLEL_SIZE=$5
-# export GLOBAL_BATCH_SIZE=$6
-# export MICRO_BATCH_SIZE=$7
-# export NODELIST=$8
 export EXP_NAME='GPT_MEGATRON'
 export MODEL_NAME='GPT-760M'    
-export TENSOR_PARALLEL_SIZE='2'
+export TENSOR_PARALLEL_SIZE='1'
 export PIPELINE_PARALLEL_SIZE='2'
-export DATA_PARALLEL_SIZE='1'
+export DATA_PARALLEL_SIZE='4'
 export GLOBAL_BATCH_SIZE='64'
-export MICRO_BATCH_SIZE='4'
+export MICRO_BATCH_SIZE='32'
 export NODELIST='nico3'
-export GPUS_PER_NODE=4
 
 export NUM_LAYERS=-1
 export HIDDEN_SIZE=-1
@@ -65,13 +57,13 @@ NNODES=$(scontrol show hostnames ${NODELIST} | wc -l)
 
 srun \
     --exclusive \
-    -p V100 \
+    -p V100\
     -K \
     --time 30:00 \
 	-N $NNODES \
     -w $NODELIST \
-	--ntasks-per-node=$GPUS_PER_NODE \
-    --gres=gpu:$GPUS_PER_NODE \
-    --export=ALL \
-	./pretrain.sh \
+	--export=ALL \
+	--ntasks-per-node=4 \
+	--gres=gpu:4 \
+	zDemo/pretrain.sh \
 	| tee ${LOG_DIR}/${LOG_NAME}

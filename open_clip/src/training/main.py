@@ -27,7 +27,8 @@ try:
 except ImportError:
     hvd = None
 
-from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
+# from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
+from ..open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, broadcast_object
 from training.logger import setup_logging
@@ -118,6 +119,7 @@ def main(args):
             return -1
 
     # Setup text logger
+    # 设置了各种方法来记录日志
     args.log_level = logging.DEBUG if args.debug else logging.INFO
     setup_logging(args.log_path, args.log_level)
 
@@ -170,7 +172,7 @@ def main(args):
     if args.copy_codebase:
         copy_codebase(args)
 
-    # start the sync proces if remote-sync is not None
+    # start the sync proces if remote-sync is not None， 还有远程的同步
     remote_sync_process = None
     if is_master(args) and args.remote_sync is not None:
         # first make sure it works
@@ -221,6 +223,7 @@ def main(args):
         # arg is nargs, single (square) image size list -> int
         args.force_image_size = args.force_image_size[0]
     random_seed(args.seed, 0)
+    # 此处获取model以及预处理
     model, preprocess_train, preprocess_val = create_model_and_transforms(
         args.model,
         args.pretrained,
@@ -445,6 +448,8 @@ def main(args):
             train_one_epoch_deepspeed(engine, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
         elif args.enable_flexpipe:
             train_one_epoch_deepspeed_pipeline(engine, data, epoch, args)
+        elif args.enable_megatron:
+            train_one_epoch_megatron(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
         else:
             train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
         completed_epoch = epoch + 1

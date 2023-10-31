@@ -52,12 +52,13 @@ class GPTModel(MegatronModule):
         args = get_args()
         super().__init__(config=config, share_embeddings_and_output_weights=not args.untie_embeddings_and_output_weights)
 
-        self.parallel_output = parallel_output
+        self.parallel_output = parallel_output # bool 将输出并行化
         self.pre_process = pre_process
         self.post_process = post_process
         self.fp16_lm_cross_entropy = args.fp16_lm_cross_entropy
         self.untie_embeddings_and_output_weights = args.untie_embeddings_and_output_weights
 
+        # 看一下Megatron的GPT language model的实现
         self.language_model, self._language_model_key = get_language_model(
             config=config,
             num_tokentypes=num_tokentypes,

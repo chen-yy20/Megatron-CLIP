@@ -1029,7 +1029,7 @@ def send_backward_recv_forward(input_tensor_grads, tensor_shapes, config):
         input_tensors.append(input_tensor)
     return input_tensors
 
-
+# *号表示所有参数都是关键字参数
 def forward_backward_pipelining_without_interleaving(
     *,
     forward_step_func,

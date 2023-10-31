@@ -166,6 +166,7 @@ class VitBackbone(MegatronModule):
         self.input_tensor = None
         self.position_ids = None
 
+        # preprocess中都没有用到megatron，对于CLIP而言，preprocess和posrprocess都是可以直接特定的
         if self.pre_process:
             # cls_token
             if self.class_token:
@@ -195,7 +196,7 @@ class VitBackbone(MegatronModule):
 
             self.embedding_dropout = torch.nn.Dropout(args.hidden_dropout)
 
-        # Transformer
+        # Transformer，要搞清楚config有哪些
         self.transformer = ParallelTransformer(
             config,
             model_type=args.model_type,
