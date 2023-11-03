@@ -53,6 +53,7 @@ def parse_args(extra_args_provider=None, ignore_unknown_args=False):
 
     # Args from environment
     args.rank = int(os.getenv('RANK', '0'))
+    # world size retrieved from torch.distributed environment
     args.world_size = int(os.getenv("WORLD_SIZE", '1'))
 
     return args
@@ -80,7 +81,7 @@ def validate_args(args, defaults={}):
         ' divisible by tensor parallel size ({}) times pipeline parallel ' \
         'size ({})'.format(args.world_size, args.tensor_model_parallel_size,
                            args.pipeline_model_parallel_size)
-    args.data_parallel_size = args.world_size // model_parallel_size
+    args.data_parallel_size = args.world_size // model_parallel_size # 不用设定，因为可以算出来
     if args.rank == 0:
         print('using world size: {}, data-parallel-size: {}, '
               'tensor-model-parallel size: {}, '

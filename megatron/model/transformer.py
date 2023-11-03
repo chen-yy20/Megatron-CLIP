@@ -1282,6 +1282,7 @@ def _get_num_layers(args, model_type, is_decoder=False):
     is_encoder_and_decoder_model = (model_type == ModelType.encoder_and_decoder)
     if model_type == ModelType.retro_encoder:
         num_layers = args.retro_encoder_layers
+    # 处于多GPU的计算环境中
     elif mpu.get_pipeline_model_parallel_world_size() > 1:
         if is_encoder_and_decoder_model:
             assert args.pipeline_model_parallel_split_rank is not None
@@ -1322,6 +1323,7 @@ def _get_num_layers(args, model_type, is_decoder=False):
                 0
                 if args.standalone_embedding_stage
                 and mpu.get_pipeline_model_parallel_rank() == 0 else
+                # 我们主要走这一条
                 args.num_layers // args.transformer_pipeline_model_parallel_size
             )
     else:
@@ -1431,9 +1433,10 @@ class ParallelTransformer(MegatronModule):
         self.checkpoint_core_attention = config.recompute_granularity == 'selective'
 
         # Number of layers.
+        # 只有流水线并行需要在乎模型的层数
         self.num_layers = _get_num_layers(args, model_type,
                                           layer_type==LayerType.decoder)
-
+        # 不同层丢弃神经元连接的概率，以列表方式储存，一般靠近输入droppath小，靠近输出droppath大
         self.drop_path_rates = [
             rate.item() for rate in
             torch.linspace(0, self.drop_path_rate, config.num_layers)]
@@ -1529,6 +1532,7 @@ class ParallelTransformer(MegatronModule):
                     offset = pipeline_rank * self.num_layers
                 else:
                     num_ranks_in_enc = args.pipeline_model_parallel_split_rank
+                    # 解码器的偏移需要先减去编码器的进程数再做计算，num_layers是切分后的层数
                     offset = (pipeline_rank - num_ranks_in_enc) * self.num_layers
             else:
                 offset = mpu.get_pipeline_model_parallel_rank() * self.num_layers
@@ -1545,6 +1549,7 @@ class ParallelTransformer(MegatronModule):
             self.num_layers = 1
             self.layers = torch.nn.ModuleList([ NoopTransformerLayer(1) ])
         else:
+            # 在此处建立了可以并行的transformer层
             self.layers = torch.nn.ModuleList(
                 [build_layer(i + 1 + offset) for i in range(self.num_layers)])
 

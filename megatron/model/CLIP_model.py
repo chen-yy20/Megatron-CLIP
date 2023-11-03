@@ -10,23 +10,24 @@ from torch import Tensor
 from torch import nn
 import torch.nn.functional as F
 import numpy as np
+import einops
 
 from megatron import get_args
 from megatron.core import tensor_parallel
 from megatron.model.enums import AttnMaskType
 from megatron.model.language_model import parallel_lm_logits
-from megatron.model.language_model import get_language_model
-from megatron.model.utils import get_norm
-from megatron.model.utils import openai_gelu, erf_gelu
-from megatron.model.utils import get_linear_layer
-from megatron.model.utils import init_method_normal
-from megatron.model.utils import scaled_init_method_normal
 from .module import MegatronModule
 from dataclasses import dataclass
-from typing import Optional, Tuple, Union, Literal
+from typing import Optional, Tuple, Union, Literal, Callable
 
 # Vision Import
-from megatron.model.vision.vit_backbone import VitBackbone, VitMlpHead
+from megatron.model.transformer import ParallelTransformer
+from megatron.model.vision.vit_backbone import VitBackbone, VitMlpHead, twod_interpolate_position_embeddings_hook
+from megatron.model.utils import (
+    get_linear_layer,
+    init_method_normal,
+    scaled_init_method_normal,
+)
 
 # Transformer Import
 from megatron.core.transformer.spec_utils import ModuleSpec
@@ -34,6 +35,16 @@ from megatron.core.models.common.embeddings.language_model_embedding import Lang
 from megatron.core.transformer.transformer_block import TransformerBlock
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.models.common.embeddings.rotary_pos_embedding import RotaryEmbedding
+
+
+# Shall we use this layernorm?
+class LayerNorm(nn.LayerNorm):
+    """Subclass torch's LayerNorm (with cast back to input dtype)."""
+
+    def forward(self, x: torch.Tensor):
+        orig_type = x.dtype
+        x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
+        return x.to(orig_type)
 
 # Vision Model
 
@@ -58,33 +69,78 @@ class CLIPVisionCfg:
 class CLIPVisionModel(MegatronModule):
     """Vision Transformer Model."""
 
-    def __init__(self, config, num_classes, finetune=False,
-                 pre_process=True, post_process=True):
-        super(VitClassificationModel, self).__init__()
-        args = get_args()
-        self.config = config
+    def __init__(self, config, args,
+                image_size: int,
+                patch_size: int,
+                width: int,
+                layers: int,
+                heads: int,
+                mlp_ratio: float,
+                ls_init_value: float = None,
+                hidden_dropout: float = 0.1,
+                global_average_pool: bool = False,
+                attentional_pool: bool = False,
+                n_queries: int = 256,
+                attn_pooler_heads: int = 8,
+                output_dim: int = 512,
+                patch_dropout: float = 0.,
+                input_patchnorm: bool = False,
+                act_layer: Callable = nn.GELU,
+                norm_layer: Callable = LayerNorm,
+                output_tokens: bool = False
+                 ):
+        # super(VitBackbone, self).__init__(share_embeddings_and_output_weights=False)
+        # super(self).__init__()
+        self.output_tokens = output_tokens
+        # image_height, image_width = self.image_size = to_2tuple(image_size)
+        # patch_height, patch_width = self.patch_size = to_2tuple(patch_size)
+        self.img_h = self.img_w = image_size
+        self.patch_dim = patch_size
+        assert self.img_h % self.patch_dim == 0
+        assert self.img_w % self.patch_dim == 0
+        self.num_patches_per_dim_h = self.img_h // self.patch_dim
+        self.num_patches_per_dim_w = self.img_w // self.patch_dim
+        self.num_patches = self.num_patches_per_dim_h * self.num_patches_per_dim_w
+        self.seq_length = self.num_patches
+        self.flatten_dim = self.patch_dim * self.patch_dim * 3  # 展平了每个patch输入的channel
+        # FIXME:
+        self.hidden_size = None
+        self.output_dim = output_dim
 
-        self.hidden_size = args.hidden_size
-        self.num_classes = num_classes
-        self.finetune = finetune
-        self.pre_process = pre_process
-        self.post_process = post_process
-        self.backbone = VitBackbone(
-            config=config,
-            pre_process=self.pre_process,
-            post_process=self.post_process,
-            single_token_output=True
+        # Parallel Settings
+        self.micro_batch_size = args.micro_batch_size
+        self.config = config
+        # TODO:
+        self.single_token_output = False
+        self.drop_path_rate = 0.0
+
+        # preprocess
+        self.position_ids = torch.arange(self.seq_length).expand(1, -1).cuda()
+        self.linear_encoder = torch.nn.Linear(
+                self.flatten_dim, self.hidden_size
+            )
+        # 待会注意embedding是怎样被使用的
+        self.position_embeddings = torch.nn.Embedding(
+            self.seq_length, self.hidden_size
         )
-        self.head = VitMlpHead(config, self.hidden_size, self.num_classes)
-        # if self.post_process:
-        #     if not self.finetune:
-        #         self.head = VitMlpHead(config, self.hidden_size, self.num_classes)
-        #     else:
-        #         self.head = get_linear_layer(
-        #             self.hidden_size,
-        #             self.num_classes,
-        #             torch.nn.init.zeros_
-        #         )
+        # 设置正态分布的方差
+        init_method_normal(sigma = 1)(
+            self.position_embeddings.weight
+        )
+
+        self.position_embeddings._register_load_state_dict_pre_hook(
+            twod_interpolate_position_embeddings_hook
+        )
+
+        self.embedding_dropout = torch.nn.Dropout(hidden_dropout)
+        self.transformer = ParallelTransformer(
+            config,  
+            model_type='vision', # 我们可以设置model-type来确定是vision还是text
+            pre_process=True,
+            post_process=False,
+            post_norm = False,
+            drop_path_rate=self.drop_path_rate
+        )
     
     def set_input_tensor(self, input_tensor):
         """See megatron.model.transformer.set_input_tensor()"""
@@ -97,12 +153,26 @@ class CLIPVisionModel(MegatronModule):
         self.backbone.set_input_tensor(input_tensor)
 
     def forward(self, input):
-        hidden_states = self.backbone(input)
+        rearranged_input = einops.rearrange(
+            input,
+            "b c (h p1) (w p2) -> b (h w) (p1 p2 c)",
+            p1 = self.patch_dim,
+            p2 = self.patch_dim,
+        )
 
-        if self.post_process:
-            hidden_states = self.head(hidden_states)
+        assert rearranged_input.dtype == torch.half
+        encoder_output = self.linear_encoder(rearranged_input)
+        token_embeddings = encoder_output + \
+        self.position_embeddings(self.position_ids[:,:encoder_output.shape[1]])
+        # [s, b, h] => [b, s, h]
+        token_embeddings = token_embeddings.transpose(0, 1).continguous()
+        hidden_states = self.embedding_dropout(token_embeddings)
+
+        # Transformer
+        hidden_states = self.transformer(hidden_states, None)
 
         return hidden_states
+        
 
 # Text Model
 
@@ -262,7 +332,7 @@ def _build_vision_tower(
     act_layer = nn.GELU
     vision_heads = vision_cfg.width // vision_cfg.head_width
     # norm_layer要如何确定？
-    # FIXME: NUM_CLASSES肯定不对，condig的细节也要改
+    # FIXME: NUM_CLASSES肯定不对，config的细节也要改
     visual = CLIPVisionModel(
         config=vision_cfg,
         num_classes=embed_dim,

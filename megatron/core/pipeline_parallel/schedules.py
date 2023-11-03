@@ -92,6 +92,7 @@ def get_forward_backward_func():
     pipeline_model_parallel_size = parallel_state.get_pipeline_model_parallel_world_size()
     if pipeline_model_parallel_size > 1:
         if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
+            # 交错式管道并行，而且以virtual pipe的形式， 以更高通信换取更少的bubble
             forward_backward_func = forward_backward_pipelining_with_interleaving
         else:
             forward_backward_func = forward_backward_pipelining_without_interleaving
@@ -171,6 +172,7 @@ def forward_step(
         input_tensor = [input_tensor]
         unwrap_output_tensor = True
 
+    # 从model中提取出特有的set_input_tensor方法
     set_input_tensor = get_attr_wrapped_model(model, "set_input_tensor")
     set_input_tensor(input_tensor)
 
@@ -185,7 +187,7 @@ def forward_step(
             output_tensor, loss_func = forward_step_func(
                 data_iterator, model, checkpoint_activations_microbatch
             )
-
+    # 最后的stage需要计算loss
     if parallel_state.is_pipeline_last_stage():
         if not collect_non_loss_data:
             output_tensor = loss_func(output_tensor)
@@ -207,6 +209,7 @@ def forward_step(
         parallel_state.is_pipeline_stage_after_split()
         and model_type == ModelType.encoder_and_decoder
     ):
+        # decoder: 同时接收encoder的hidden_state和decoder的input
         return [output_tensor, input_tensor[-1]]
     if unwrap_output_tensor:
         return output_tensor
@@ -387,6 +390,7 @@ def forward_backward_pipelining_with_interleaving(
     ), "interleaved pipeline parallelism expected each model chunk to have a data iterator"
 
     config = get_model_config(model[0])
+    # overlap: interleave 1F1B / batch: run all F then all B
     if config.overlap_p2p_comm and config.batch_p2p_comm:
         raise ValueError("Can not use both overlap_p2p_comm and batch_p2p_comm")
 
@@ -437,6 +441,7 @@ def forward_backward_pipelining_with_interleaving(
     if model_type == ModelType.encoder_and_decoder:
         raise RuntimeError("Interleaving is not supported with an encoder and decoder model.")
 
+    # TODO: WHY?
     if decoder_seq_length is not None and decoder_seq_length != seq_length:
         raise RuntimeError(
             "Interleaving is not supported with a different decoder sequence length."
@@ -444,14 +449,15 @@ def forward_backward_pipelining_with_interleaving(
 
     tensor_shape = [seq_length, micro_batch_size, config.hidden_size]
     if config.sequence_parallel:
+        # tensor parallel，sequence length is devided
         tensor_shape[0] = tensor_shape[0] // parallel_state.get_tensor_model_parallel_world_size()
 
-    # Compute number of warmup and remaining microbatches.
-    num_model_chunks = len(model)
-    total_num_microbatches = num_microbatches * num_model_chunks
+    # Compute number of warmup and remaining microbatches. # 计算预热和剩余的microbatch
+    num_model_chunks = len(model) # 模型的分块数
+    total_num_microbatches = num_microbatches * num_model_chunks # 对于一个iter，总的microbatch数
     all_warmup_microbatches = False
     if forward_only:
-        num_warmup_microbatches = total_num_microbatches
+        num_warmup_microbatches = total_num_microbatches # 只做前向传播的话，所有的microbatch都是预热的
     else:
         # Run all forward passes and then all backward passes if number of
         # microbatches is just the number of pipeline stages.
@@ -460,10 +466,10 @@ def forward_backward_pipelining_with_interleaving(
         # stage ID (more forward passes for earlier stages, later stages can
         # immediately start with 1F1B).
         if num_microbatches == pipeline_parallel_size:
-            num_warmup_microbatches = total_num_microbatches
+            num_warmup_microbatches = total_num_microbatches # 所有批次都是预热的
             all_warmup_microbatches = True
         else:
-            num_warmup_microbatches = (pipeline_parallel_size - pipeline_parallel_rank - 1) * 2
+            num_warmup_microbatches = (pipeline_parallel_size - pipeline_parallel_rank - 1) * 2 
             num_warmup_microbatches += (num_model_chunks - 1) * pipeline_parallel_size
             num_warmup_microbatches = min(num_warmup_microbatches, total_num_microbatches)
     num_microbatches_remaining = total_num_microbatches - num_warmup_microbatches
@@ -476,20 +482,23 @@ def forward_backward_pipelining_with_interleaving(
     # all Transformer layers. The window of micro-batches is set by the maximum
     # outstanding backpropagations and becomes smaller at later pipeline stages.
     # Please refer the appendix C in https://arxiv.org/pdf/2205.05198.pdf
-    max_outstanding_backprops = None
-    if config.num_microbatches_with_partial_activation_checkpoints is not None:
-        max_outstanding_backprops = num_warmup_microbatches + 1
+    max_outstanding_backprops = None # 最大未完成的反向传播次数
+    if config.num_microbatches_with_partial_activation_checkpoints is not None: # 要进行 部分激活状态检查点操作
+        max_outstanding_backprops = num_warmup_microbatches + 1 # 可以忍受预热批次+1的未反向传播
 
     # Synchronize params for first two model chunks
+    # TODO: WHY? 保证模型具有同步的参数
     if config.param_sync_func is not None:
         config.param_sync_func(model[0].parameters())
         config.param_sync_func(model[1].parameters())
 
+    # TODO: WHY? 
     def get_model_chunk_id(microbatch_id, forward):
         """Helper method to get the model chunk ID given the iteration number."""
         microbatch_id_in_group = microbatch_id % (pipeline_parallel_size * num_model_chunks)
         model_chunk_id = microbatch_id_in_group // pipeline_parallel_size
         if not forward:
+            # 反向传播下的chunk_id
             model_chunk_id = num_model_chunks - model_chunk_id - 1
         return model_chunk_id
 
@@ -541,6 +550,7 @@ def forward_backward_pipelining_with_interleaving(
         if parallel_state.is_pipeline_first_stage():
             if len(input_tensors[model_chunk_id]) == len(output_tensors[model_chunk_id]):
                 input_tensors[model_chunk_id].append(None)
+        # TODO: Why the last one? 
         input_tensor = input_tensors[model_chunk_id][-1]
         output_tensor = forward_step(
             forward_step_func,
@@ -1089,7 +1099,7 @@ def forward_backward_pipelining_without_interleaving(
 
     disable_grad_sync()
 
-    # Compute number of warmup microbatches.
+    # Compute number of warmup microbatches. 不预热的话性能会下降？
     num_warmup_microbatches = (
         parallel_state.get_pipeline_model_parallel_world_size()
         - parallel_state.get_pipeline_model_parallel_rank()
@@ -1120,7 +1130,7 @@ def forward_backward_pipelining_without_interleaving(
         micro_batch_size=micro_batch_size,
         decoder_seq_length=decoder_seq_length,
         config=config,
-    )
+    ) 
     send_tensor_shapes = get_tensor_shapes(
         rank=rank,
         model_type=model_type,

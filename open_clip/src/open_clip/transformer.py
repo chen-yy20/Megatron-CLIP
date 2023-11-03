@@ -223,7 +223,7 @@ class ResidualAttentionBlock(nn.Module):
     ):
         k_x = k_x if k_x is not None else q_x
         v_x = v_x if v_x is not None else q_x
-
+        # 加上了mask
         attn_mask = attn_mask.to(q_x.dtype) if attn_mask is not None else None
         return self.attn(
             q_x, k_x, v_x, need_weights=False, attn_mask=attn_mask
@@ -239,6 +239,7 @@ class ResidualAttentionBlock(nn.Module):
         k_x = self.ln_1_kv(k_x) if hasattr(self, "ln_1_kv") and k_x is not None else None
         v_x = self.ln_1_kv(v_x) if hasattr(self, "ln_1_kv") and v_x is not None else None
 
+        # 两个残差连接，1个muti-head attention，1个mlp
         x = q_x + self.ls_1(self.attention(q_x=self.ln_1(q_x), k_x=k_x, v_x=v_x, attn_mask=attn_mask))
         x = x + self.ls_2(self.mlp(self.ln_2(x)))
         return x
@@ -538,14 +539,19 @@ class TextTransformer(nn.Module):
         self.heads = heads
         self.pad_id = pad_id
 
+        # 可以将嵌入表示或者特征映射到不同的空间
         self.text_projection = nn.Parameter(torch.empty(width, output_dim))
 
+        # 是否要在嵌入中包含一个类别标记，在输入序列中嵌入<cls>标记往往很有用
+        # width对应的就是embed_dim
         if embed_cls:
             self.cls_emb = nn.Parameter(torch.empty(width))
+            # num_pos对应的就是sequence_length
             self.num_pos += 1
         else:
             self.cls_emb = None
 
+        # 词表映射到嵌入空间
         self.token_embedding = nn.Embedding(vocab_size, width)
         self.positional_embedding = nn.Parameter(torch.empty(self.num_pos, width))
         self.transformer = Transformer(
@@ -605,6 +611,7 @@ class TextTransformer(nn.Module):
         return t.reshape(1, 1, -1).repeat(N, 1, 1)
 
     def forward(self, text):
+        # cast_dtype就是根据硬件需要和模型精度决定Transformer的数据类型
         cast_dtype = self.transformer.get_cast_dtype()
         seq_len = text.shape[1]
 
@@ -614,6 +621,7 @@ class TextTransformer(nn.Module):
             seq_len += 1
             x = torch.cat([x, self._repeat(self.cls_emb, x.shape[0])], dim=1)
             cls_mask = self.build_cls_mask(text, cast_dtype)
+            # 两个mask可以直接取并集
             attn_mask = attn_mask[None, :seq_len, :seq_len] + cls_mask[:, :seq_len, :seq_len]
 
         x = x + self.positional_embedding[:seq_len].to(cast_dtype)
@@ -623,14 +631,19 @@ class TextTransformer(nn.Module):
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
+        # 如果包含类别表及
         if self.cls_emb is not None:
+            # 类别标记输出为pooled，其它的输出为tokens
             pooled, tokens = x[:, -1], x[:, :-1]
+            # 统一类别标记的均值和方差
             pooled = self.ln_final(pooled)
         else:
             x = self.ln_final(x)
+            # pooled为batch_size个“从tokens中找出的最大值”
             pooled, tokens = x[torch.arange(x.shape[0]), text.argmax(dim=-1)], x
 
         if self.text_projection is not None:
+            # 这是直观而间接的python3.5后引入的矩阵乘法重载
             pooled = pooled @ self.text_projection
 
         if self.output_tokens:

@@ -164,7 +164,7 @@ def _batched_p2p_ops(
         reqs = []
     return reqs
 
-
+# All the operations are send and receive in the forward and backward directions.
 def _p2p_ops(
     *,
     tensor_send_prev: Optional[torch.Tensor],

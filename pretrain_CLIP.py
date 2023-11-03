@@ -24,63 +24,26 @@ from megatron.arguments import core_transformer_config_from_args
 #     gpt_layer_with_transformer_engine_spec,
 #     gpt_layer_with_transformer_engine_spec_moe
 # )
-from megatron.model.vision.classification import VitClassificationModel
-from megatron.model.vision.classification import MitClassificationModel
-from megatron.model.transformer import ParallelTransformer
-
-def ViT_model_provider(pre_process=True, post_process=True):
-    """Build the model."""
-
-    args = get_args()
-    config = core_transformer_config_from_args(args)
-    print_rank_0("building VIT model ...")
-    model = VitClassificationModel(config=config,
-                                    num_classes=args.num_classes,
-                                    pre_process=pre_process,
-                                    post_process=post_process)
-    return model
-
-def Text_model_provider(pre_process=True, post_process=True):
-    """Build the model."""
-
-    args = get_args()
-    config = core_transformer_config_from_args(args)
-    print_rank_0("building Text model ...")
-    model = GPTModel(
-        config,
-        num_tokentypes=0,
-        parallel_output=True,
-        pre_process=pre_process,
-        post_process=post_process
-    )
-    return model
+from megatron.model import CLIP_model
 
 
 
-def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megatron.model.GPTModel]:
-    """Builds the model.
 
-    If you set the use_mcore_models to True, it will return the mcore GPT model and if not the legacy GPT model.
-
-    Args:
-        pre_process (bool, optional): Set to true if you need to compute embedings. Defaults to True.
-        post_process (bool, optional): Set to true if you need to want to compute output logits/loss. Defaults to True.
-
-
-    Returns:
-        Union[GPTModel, megatron.model.GPTModel]: The returned model
-    """
+def model_provider(pre_process=True, post_process=True) -> CLIP_model.CLIPModel:
+    """Builds the model. """
     args = get_args()
 
     print_rank_0('building GPT model ...')
     config = core_transformer_config_from_args(get_args())
+    vision_config = None
+    text_config = None
+    embed_dim = 512
 
-    model = megatron.model.GPTModel(
-        config,
-        num_tokentypes=0,
-        parallel_output=True,
-        pre_process=pre_process,
-        post_process=post_process
+    model = CLIP_model.CLIPModel(
+        embed_dim=embed_dim,
+        vision_cfg=vision_config,
+        text_cfg=text_config,
+        output_dict=True,
     )
 
     return model
