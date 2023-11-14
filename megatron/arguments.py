@@ -441,6 +441,33 @@ def core_transformer_config_from_args(args):
 
     return TransformerConfig(**kw_args)
 
+def vision_transformer_config_from_args(args):
+     # Translate args to core transformer configuration
+    kw_args = {}
+    for f in dataclasses.fields(TransformerConfig):
+        if hasattr(args, f.name):
+            kw_args[f.name] = getattr(args, f.name)
+    kw_args['persist_layer_norm'] = not args.no_persist_layer_norm
+    kw_args['layernorm_zero_centered_gamma'] = args.apply_layernorm_1p
+    kw_args['layernorm_epsilon'] = args.norm_epsilon
+    kw_args['deallocate_pipeline_outputs'] = True
+    kw_args['pipeline_dtype'] = args.params_dtype
+    kw_args['batch_p2p_comm'] = not args.overlap_p2p_comm
+    kw_args['num_moe_experts'] = args.num_experts
+    if args.swiglu:
+        kw_args['activation_func'] = F.silu
+        kw_args['gated_linear_unit'] = True
+        kw_args['bias_gelu_fusion'] = False
+    if args.init_method_xavier_uniform:
+        kw_args['init_method'] = torch.nn.init.xavier_uniform_
+        kw_args['scaled_init_method'] = torch.nn.init.xavier_uniform_
+    if args.group_query_attention:
+        kw_args['num_query_groups'] = args.num_query_groups
+    else:
+        kw_args['num_query_groups'] = None
+
+    return TransformerConfig(**kw_args)
+
 def _add_transformer_engine_args(parser):
     group = parser.add_argument_group(title='Transformer-Engine')
 
@@ -716,6 +743,9 @@ def _add_regularization_args(parser):
                        'numerical stability')
     group.add_argument('--sgd-momentum', type=float, default=0.9,
                        help='Momentum factor for sgd')
+    group.add_argument('--pooler-type', type=str, default='mean',
+                       choices=['mean', 'max'],
+                       help='Pooler type')
     return parser
 
 
@@ -1250,6 +1280,30 @@ def _add_biencoder_args(parser):
 def _add_vision_args(parser):
     group = parser.add_argument_group(title="vision")
 
+    # CLIP Transformer arguments
+    group.add_argument('--vLayer', type=int, default=12,
+                       help='Number of layers in CLIP Transformer')
+    group.add_argument('--vHidden', type=int, default=768,
+                          help='Hidden dimension size in CLIP Transformer')
+    group.add_argument('--vHeadWidth', type=int, default=64,
+                          help='Attention head width in CLIP Transformer')
+    group.add_argument('--vMlpRatio', type=float, default=4.0,
+                            help='MLP ratio in CLIP Transformer')
+    group.add_argument('--vPatchDropout', type=float, default=0.0,
+                            help='what fraction of patches to dropout during training (0 would mean disabled and no patches dropped) - 0.5 to 0.75 recommended in the paper for optimal results')
+    group.add_argument('--vInputPatchnorm', action='store_false',
+                            help='whether to use dual patchnorm - would only apply the input layernorm on each patch, as post-layernorm already exist in original clip vit design')
+    group.add_argument('--vGlobalAveragePool', action='store_false',
+                       help='whether to global average pool the last embedding layer, instead of using CLS token (https://arxiv.org/abs/2205.01580)')
+    group.add_argument('--vAttentionalPool', action='store_false',
+                       help='whether to use attentional pooler in the last embedding layer')
+    group.add_argument('--vNQueries', type=int, default=256,
+                       help='n_queries for attentional pooler')
+    group.add_argument('--vAttnPoolerHeads', type=int, default=8,
+                       help='n heads for attentional_pooling')
+    group.add_argument('--vOutputTokens', action='store_false',
+                       help='whether to output tokens from the last embedding layer')
+
     # general vision arguements
     group.add_argument('--num-classes', type=int, default=1000,
                        help='num of classes in vision classificaiton task')
@@ -1312,6 +1366,9 @@ def _add_vision_args(parser):
                        help='teacher temperature')
     group.add_argument('--dino-warmup-teacher-temp-epochs', type=int, default=30,
                        help='warmup teacher temperaure epochs')
+    
+    
+  
 
     return parser
 

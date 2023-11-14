@@ -48,129 +48,29 @@ class LayerNorm(nn.LayerNorm):
 
 # Vision Model
 
-@dataclass
-class CLIPVisionCfg:
-    layers: Union[Tuple[int, int, int, int], int] = 12
-    width: int = 768
-    head_width: int = 64
-    mlp_ratio: float = 4.0
-    patch_size: int = 16
-    image_size: Union[Tuple[int, int], int] = 224
-    ls_init_value: Optional[float] = None  # layer scale initial value
-    patch_dropout: float = 0.  # what fraction of patches to dropout during training (0 would mean disabled and no patches dropped) - 0.5 to 0.75 recommended in the paper for optimal results
-    input_patchnorm: bool = False # whether to use dual patchnorm - would only apply the input layernorm on each patch, as post-layernorm already exist in original clip vit design
-    global_average_pool: bool = False  # whether to global average pool the last embedding layer, instead of using CLS token (https://arxiv.org/abs/2205.01580)
-    attentional_pool: bool = False # whether to use attentional pooler in the last embedding layer
-    n_queries: int = 256 # n_queries for attentional pooler
-    attn_pooler_heads: int = 8 # n heads for attentional_pooling
-    # 省略了所有timm设置
-    output_tokens: bool = False
-
 class CLIPVisionModel(MegatronModule):
     """Vision Transformer Model."""
 
-    def __init__(self, config, args,
-                image_size: int,
-                patch_size: int,
-                width: int,
-                layers: int,
-                heads: int,
-                mlp_ratio: float,
-                ls_init_value: float = None,
-                hidden_dropout: float = 0.1,
-                global_average_pool: bool = False,
-                attentional_pool: bool = False,
-                n_queries: int = 256,
-                attn_pooler_heads: int = 8,
-                output_dim: int = 512,
-                patch_dropout: float = 0.,
-                input_patchnorm: bool = False,
-                act_layer: Callable = nn.GELU,
-                norm_layer: Callable = LayerNorm,
-                output_tokens: bool = False
-                 ):
-        # super(VitBackbone, self).__init__(share_embeddings_and_output_weights=False)
-        # super(self).__init__()
-        self.output_tokens = output_tokens
-        # image_height, image_width = self.image_size = to_2tuple(image_size)
-        # patch_height, patch_width = self.patch_size = to_2tuple(patch_size)
-        self.img_h = self.img_w = image_size
-        self.patch_dim = patch_size
-        assert self.img_h % self.patch_dim == 0
-        assert self.img_w % self.patch_dim == 0
-        self.num_patches_per_dim_h = self.img_h // self.patch_dim
-        self.num_patches_per_dim_w = self.img_w // self.patch_dim
-        self.num_patches = self.num_patches_per_dim_h * self.num_patches_per_dim_w
-        self.seq_length = self.num_patches
-        self.flatten_dim = self.patch_dim * self.patch_dim * 3  # 展平了每个patch输入的channel
-        # FIXME:
-        self.hidden_size = None
-        self.output_dim = output_dim
-
-        # Parallel Settings
-        self.micro_batch_size = args.micro_batch_size
-        self.config = config
-        # TODO:
-        self.single_token_output = False
-        self.drop_path_rate = 0.0
-
-        # preprocess
-        self.position_ids = torch.arange(self.seq_length).expand(1, -1).cuda()
-        self.linear_encoder = torch.nn.Linear(
-                self.flatten_dim, self.hidden_size
-            )
-        # 待会注意embedding是怎样被使用的
-        self.position_embeddings = torch.nn.Embedding(
-            self.seq_length, self.hidden_size
+    def __init__(self, config, args, pre_process=True, post_process=True):
+        super(VitBackbone, self).__init__()  
+        args = get_args()
+        self.output_tokens = args.vOutputTokens
+        self.hidden_size = args.vHidden
+        self.pre_process = pre_process
+        self.post_process = post_process
+        self.backbone = VitBackbone(
+            config=config,
+            pre_process=self.pre_process,
+            post_process=self.post_process,
+            single_token_output=self.output_tokens
         )
-        # 设置正态分布的方差
-        init_method_normal(sigma = 1)(
-            self.position_embeddings.weight
-        )
-
-        self.position_embeddings._register_load_state_dict_pre_hook(
-            twod_interpolate_position_embeddings_hook
-        )
-
-        self.embedding_dropout = torch.nn.Dropout(hidden_dropout)
-        self.transformer = ParallelTransformer(
-            config,  
-            model_type='vision', # 我们可以设置model-type来确定是vision还是text
-            pre_process=True,
-            post_process=False,
-            post_norm = False,
-            drop_path_rate=self.drop_path_rate
-        )
-    
+ 
     def set_input_tensor(self, input_tensor):
         """See megatron.model.transformer.set_input_tensor()"""
-        '''
-        当进行管道并行时，前一阶段的输入来自通信，而不是来自输入，
-        因此模型的forward_step_func不会有它。 
-        因此，
-        内部代码使用该函数来绕过forward_step_func提供的输入
-        '''
         self.backbone.set_input_tensor(input_tensor)
 
     def forward(self, input):
-        rearranged_input = einops.rearrange(
-            input,
-            "b c (h p1) (w p2) -> b (h w) (p1 p2 c)",
-            p1 = self.patch_dim,
-            p2 = self.patch_dim,
-        )
-
-        assert rearranged_input.dtype == torch.half
-        encoder_output = self.linear_encoder(rearranged_input)
-        token_embeddings = encoder_output + \
-        self.position_embeddings(self.position_ids[:,:encoder_output.shape[1]])
-        # [s, b, h] => [b, s, h]
-        token_embeddings = token_embeddings.transpose(0, 1).continguous()
-        hidden_states = self.embedding_dropout(token_embeddings)
-
-        # Transformer
-        hidden_states = self.transformer(hidden_states, None)
-
+        hidden_states = self.backbone(input)
         return hidden_states
         
 

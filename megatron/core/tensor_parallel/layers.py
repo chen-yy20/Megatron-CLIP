@@ -327,6 +327,7 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
         async_grad_allreduce,
         sequence_parallel,
     ):
+        # ctx 用于上下文状态的保存
         ctx.save_for_backward(input, weight)
         ctx.use_bias = bias is not None
         ctx.gradient_accumulation_fusion = gradient_accumulation_fusion
@@ -338,6 +339,7 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
             dim_size = list(input.size())
             dim_size[0] = dim_size[0] * world_size
 
+            # 将每个进程的输入张量广播到全局内存缓冲区。这是为了将不同进程的输入数据汇总到同一地方，以便后续计算。将 total_input 设置为归约后的输入数据。
             all_gather_buffer = get_global_memory_buffer().get_tensor(dim_size, input.dtype, "mpu")
             torch.distributed._all_gather_base(
                 all_gather_buffer, input, group=get_tensor_model_parallel_group()

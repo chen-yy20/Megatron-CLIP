@@ -12,8 +12,13 @@ export CUDA_DEVICE_MAX_CONNECTIONS=1 # for async gradient all reduce
 
 DATETIME=`date +'date_%y-%m-%d_time_%H-%M-%S'`
 
-source ~/chen-yy20/mega-env/bin/activate
+source ~/mega_env/bin/activate
+# source /opt/spack/share/spack/setup-env.sh;spack load cuda@11.8.0;spack load gcc@10.2.0;spack load nccl@2.10.3
 cd /home/chen-yy20/Megatron-LM
+# /mnt/zoltan/zanzong/fastmoe-dataset
+# VOCAB_FILE=~/Megatron-LM/zData/wikidataset/gpt2-vocab.json
+# MERGE_FILE=~/Megatron-LM/zData/wikidataset/gpt2-merges.txt
+# DATA_PATH=~/Megatron-LM/zData/wikidataset/my-bert_text_sentence
 
 VOCAB_FILE=/mnt/zoltan/zanzong/fastmoe-dataset/wikidataset/gpt2-vocab.json
 MERGE_FILE=/mnt/zoltan/zanzong/fastmoe-dataset/wikidataset/gpt2-merges.txt
@@ -52,3 +57,4 @@ exec python \
         --adam-beta2 0.95 \
         --init-method-std 0.002 \
         --fp16
+        --recompute-granularity ${RECOMPUTE_GRANULARITY}

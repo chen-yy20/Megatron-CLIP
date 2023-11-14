@@ -1,19 +1,19 @@
 #! /bin/bash
 set -x
 
-GPUS_PER_NODE=8
+
 
 export NNODES=$(( $DATA_PARALLEL_SIZE * $TENSOR_PARALLEL_SIZE * $PIPELINE_PARALLEL_SIZE / $GPUS_PER_NODE))
 export MASTER_ADDR=$(scontrol show jobid=$SLURM_JOB_ID | tr '=' ' ' | grep BatchHost | awk '{print $2}')
 export NODE_RANK=$(expr $SLURM_PROCID / $NNODES)
 export WORLD_SIZE=$(($GPUS_PER_NODE*$NNODES))
 export RANK=$SLURM_PROCID
+export CUDA_DEVICE_MAX_CONNECTIONS=1 # for async gradient all reduce
 
 DATETIME=`date +'date_%y-%m-%d_time_%H-%M-%S'`
 
-# source ~/venv/bin/activate
-conda activate mega
-
+source ~/mega-env/bin/activate
+# source /opt/spack/share/spack/setup-env.sh;spack load cuda@11.8.0;spack load gcc@10.2.0;spack load nccl@2.10.3
 cd /home/chen-yy20/Megatron-LM
 
 VOCAB_FILE=/mnt/zoltan/zanzong/fastmoe-dataset/wikidataset/gpt2-vocab.json
@@ -24,10 +24,11 @@ DATA_PATH=/mnt/zoltan/zanzong/fastmoe-dataset/wikidataset/my-bert_text_sentence
 TRAIN_SAMPLES=$(( $GLOBAL_BATCH_SIZE * 15))
 
 PROFILER_LOG_PATH=$PROFILER_LOG_PATH \
-exec python3 \
+exec python \
         ./pretrain_gpt.py \
         --vocab-file $VOCAB_FILE \
 	--merge-file $MERGE_FILE \
+        --transformer-impl local \
 	--tensor-model-parallel-size $TENSOR_PARALLEL_SIZE \
 	--pipeline-model-parallel-size $PIPELINE_PARALLEL_SIZE \
 	--num-layers $NUM_LAYERS \
@@ -52,9 +53,6 @@ exec python3 \
         --adam-beta2 0.95 \
         --init-method-std 0.002 \
         --fp16 \
-        --DDP-impl local \
-	--fmoefy \
-	--num-experts 1 \
-	--top-k 2 \
-        # --log-num-zeros-in-grad \
-        # --log-params-norm 
+        --recompute-granularity full \
+        --recompute-method $RECOMPUTE_METHOD \
+        --recompute-num-layers $RECOMPUTE_NUM_LAYERS

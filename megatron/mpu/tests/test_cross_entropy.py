@@ -64,7 +64,7 @@ def test_cross_entropy(tensor_model_parallel_size):
     loss_mpu, grad_mpu = mpu_cross_entropy(batch_size, seq_length,
                                            vocab_size, logits_scale,
                                            seed)
-
+    # Both loss and grad should be identical.
     error = loss_torch.sub_(loss_mpu).abs().max()
     print('   max error in loss on global rank {}: {}'.format(
         torch.distributed.get_rank(), error))

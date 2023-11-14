@@ -8,11 +8,12 @@ import torch
 import apex
 import torch.nn.functional as F
 from megatron import get_args
-from megatron.model.transformer import ParallelTransformer
+from megatron.model.transformer import ParallelTransformer, ParallelTransformerForCLIPVision
 from megatron.model.utils import (
     get_linear_layer,
     init_method_normal,
     scaled_init_method_normal,
+    get_norm
 )
 from megatron.model.module import MegatronModule
 
@@ -247,3 +248,188 @@ class VitBackbone(MegatronModule):
 
         return hidden_states
 
+class AttentionalPooler(nn.Module):
+    def __init__(
+            self,
+            d_model: int,
+            context_dim: int,
+            n_head: int = 8,
+            n_queries: int = 256
+    ):
+        super().__init__()
+        self.query = torch.nn.Parameter(torch.randn(n_queries, d_model))
+        self.attn = torch.nn.MultiheadAttention(d_model, n_head, kdim=context_dim, vdim=context_dim)
+        self.ln_q = torch.nn.LayerNorm(d_model)
+        self.ln_k = torch.nn.LayerNorm(context_dim)
+
+    def forward(self, x: torch.Tensor):
+        x = self.ln_k(x).permute(1, 0, 2)  # NLD -> LND
+        N = x.shape[1]
+        q = self.ln_q(self.query)
+        out = self.attn(self._repeat(q, N), x, x, need_weights=False)[0]
+        return out.permute(1, 0, 2)  # LND -> NLD
+
+    def _repeat(self, query, N: int):
+        return query.unsqueeze(1).repeat(1, N, 1)
+
+class CLIP_VitBackbone(MegatronModule):
+    """Vision Transformer Model."""
+
+    def __init__(self,
+                 config,
+                 pre_process=True,
+                 post_process=True,
+                 single_token_output=False,
+                 post_layer_norm=True,
+                 drop_path_rate=0.0):
+        super(VitBackbone, self).__init__(share_embeddings_and_output_weights=False)
+        args = get_args()
+        self.config = config
+
+        self.fp16_lm_cross_entropy = args.fp16_lm_cross_entropy
+
+        self.pre_process = pre_process
+        self.post_process = post_process
+        self.class_token = args.vOutputTokens
+        self.post_layer_norm = post_layer_norm
+        self.hidden_size = args.vHidden
+        self.patch_dim = args.patch_dim
+        self.img_h = args.img_h
+        self.img_w = args.img_w
+        self.micro_batch_size = args.micro_batch_size
+        self.single_token_output = single_token_output
+        self.output_tokens = args.vOutputTokens
+        self.drop_path_rate = drop_path_rate
+        self.input_patchnorm = args.vInputPatchnorm
+        self.global_average_pool = args.vGlobalAveragePool
+        self.layer_norm = get_norm(config, is_extra=True)
+
+        assert self.img_h % self.patch_dim == 0
+        assert self.img_w % self.patch_dim == 0
+        self.num_patches_per_dim_h = self.img_h // self.patch_dim
+        self.num_patches_per_dim_w = self.img_w // self.patch_dim
+        self.num_patches = self.num_patches_per_dim_h * self.num_patches_per_dim_w
+        self.seq_length = self.num_patches + (CLASS_TOKEN_LENGTH if self.class_token else 0)
+        self.flatten_dim = self.patch_dim * self.patch_dim * args.num_channels
+        self.input_tensor = None
+        self.position_ids = None
+
+        if self.pre_process:
+            # cls_token
+            if self.class_token:
+                self.cls_token = torch.nn.Parameter(
+                    torch.randn(1, CLASS_TOKEN_LENGTH, self.hidden_size)
+                )
+                torch.nn.init.zeros_(self.cls_token)
+            self.position_ids = torch.arange(self.seq_length).expand(1, -1).cuda()
+
+            # Linear encoder
+            self.linear_encoder = torch.nn.Linear(
+                self.flatten_dim, self.hidden_size
+            )
+
+            # embedding
+            self.position_embeddings = torch.nn.Embedding(
+                self.seq_length, self.hidden_size
+            )
+            init_method_normal(args.init_method_std)(
+                self.position_embeddings.weight
+            )
+
+            self.ln_pre = torch.nn.LayerNorm(self.hidden_size, eps=1e-5)
+
+            args.class_token_present = self.class_token
+            self.position_embeddings._register_load_state_dict_pre_hook(
+                twod_interpolate_position_embeddings_hook
+            )
+
+            self.embedding_dropout = torch.nn.Dropout(args.hidden_dropout)
+        
+            
+
+        self.transformer = ParallelTransformerForCLIPVision(
+            config,
+            model_type=args.model_type,
+            pre_process=self.pre_process,
+            post_process=self.post_process,
+            # post_layer_norm=self.post_layer_norm,
+            post_norm = False,  # 在外面已经使用了ln
+            drop_path_rate=self.drop_path_rate,
+        )
+        scale = self.hidden_size ** -0.5
+        if args.vAttentionalPool:
+            self.attn_pool = AttentionalPooler(self.hidden_size, self.hidden_size, n_head=args.vAttnPoolerHeads, n_queries=args.vNQueries)
+            # What is output dim
+            self.ln_post = torch.nn.LayerNorm(self.hidden_size, eps=1e-5)
+            self.proj = torch.nn.Parameter(scale * torch.randn(self.hidden_size, self.hidden_size))
+        else:
+            self.ln_post = torch.nn.LayerNorm(self.hidden_size, eps=1e-5)
+            self.proj = torch.nn.Parameter(scale * torch.randn(self.hidden_size, self.hidden_size))
+
+    def set_input_tensor(self, input_tensor):
+        """See megatron.model.transformer.set_input_tensor()"""
+        self.transformer.set_input_tensor(input_tensor)
+
+    def _global_pool(self, x: torch.Tensor):
+        if self.global_average_pool:
+            # 平均值池化
+            return x.mean(dim=1), x
+        else:
+            '''
+            在这种模式下, x 中的每个样本被假设包含两部分：第一个元素是特定的值，而剩余的元素构成其余特征。
+            方法返回一个元组，第一个元素是 x 中每个样本的第一个元素，即 x[:, 0]。这个元素通常被视为某种特殊的值。
+            第二个元素是 x 中每个样本的其余部分，即 x[:, 1:]。这个部分包含了除第一个元素之外的所有特征。
+            第一个元素就是分类结果，第二个元素就是特征向量
+            '''
+            return x[:, 0], x[:, 1:]
+        
+    def forward(self, input):
+
+        if self.pre_process:
+            rearranged_input = einops.rearrange(
+                input,
+                "b c (h p1) (w p2) -> b (h w) (p1 p2 c)",
+                p1=self.patch_dim,
+                p2=self.patch_dim,
+            )
+
+            assert rearranged_input.dtype == torch.half
+            encoder_output = self.linear_encoder(rearranged_input)
+
+            concatenated_tokens = encoder_output
+            if self.class_token:
+                cls_tokens = self.cls_token.expand(encoder_output.shape[0], -1, -1)
+                concatenated_tokens = torch.cat((cls_tokens, encoder_output), dim=1)
+
+            token_embeddings = concatenated_tokens + \
+                    self.position_embeddings(self.position_ids[:, :concatenated_tokens.shape[1]])
+            # Add patch dropout and layernorm
+            token_embeddings = self.ln_pre(token_embeddings)
+
+            # [b, s, h] => [s, b, h]
+            token_embeddings = token_embeddings.transpose(0, 1).contiguous()
+            hidden_states = self.embedding_dropout(token_embeddings)
+        else:
+            hidden_states = input
+
+        hidden_states = self.transformer(hidden_states, None)
+
+        if self.post_process:
+            # [s b h] => [b s h]
+            hidden_states = hidden_states.transpose(0, 1).contiguous()
+            if self.attn_pool is not None:
+                hidden_states = self.attn_pool(hidden_states)
+                hidden_states = self.ln_post(hidden_states)
+                pooled, tokens = self._global_pool(hidden_states)
+            else:
+                pooled, tokens = self._global_pool(hidden_states)
+                pooled = self.layer_norm(pooled)
+            if self.proj is not None:
+                pooled = pooled @ self.proj
+            
+            if self.output_tokens:
+                return pooled, tokens
+            
+            return pooled
+
+        return hidden_states
