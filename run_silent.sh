@@ -43,29 +43,18 @@ if [ ${NUM_LAYERS} == -1 ];then
     exit -1
 fi
 
-if [ ${RECOMPUTE_GRANULARITY} == "selective" ];then
-    export EXPERIMENT_METHOD="selective"
-fi
-
-if [ ${RECOMPUTE_GRANULARITY} == "none" ];then
-    export EXPERIMENT_METHOD="none"
-fi
-
-if [ ${RECOMPUTE_GRANULARITY} == "full" ];then
-    export EXPERIMENT_METHOD="${RECOMPUTE_GRANULARITY}_${RECOMPUTE_METHOD}_${RECOMPUTE_NUM_LAYERS}"
-fi
 
 mkdir -p ./logs
 mkdir -p ./logs/${EXP_NAME}
 
 LOG_DIR=$(pwd)/logs/${EXP_NAME}
 
-LOG_PREFIX=${MODEL_NAME}\_t$TENSOR_PARALLEL_SIZE\_d$DATA_PARALLEL_SIZE\_p$PIPELINE_PARALLEL_SIZE\_gbs$GLOBAL_BATCH_SIZE\_mbs$MICRO_BATCH_SIZE\_WAY$EXPERIMENT_METHOD
-LOG_NAME=${LOG_PREFIX}.log
-
 NNODES=$(scontrol show hostnames ${NODELIST} | wc -l)
 
-if [ ${RECOMPUTE_GRANULARITY} != "full" ];then
+
+if [ ${RECOMPUTE_GRANULARITY} == "selective" ];then
+    LOG_PREFIX=${MODEL_NAME}\_t$TENSOR_PARALLEL_SIZE\_d$DATA_PARALLEL_SIZE\_p$PIPELINE_PARALLEL_SIZE\_gbs$GLOBAL_BATCH_SIZE\_mbs$MICRO_BATCH_SIZE\_WAYselective
+    LOG_NAME=${LOG_PREFIX}.log
     nohup srun \
     --exclusive=user \
     -p Big \
@@ -77,10 +66,30 @@ if [ ${RECOMPUTE_GRANULARITY} != "full" ];then
 	--ntasks-per-node=$GPUS_PER_NODE \
     --gres=gpu:$GPUS_PER_NODE \
     --export=ALL \
-	bash pretrain.sh  > ${LOG_DIR}/${LOG_NAME} 2>&1
+	bash ./zPretrain/pretrain_selective.sh  > ${LOG_DIR}/${LOG_NAME} 2>&1
+fi
+
+if [ ${RECOMPUTE_GRANULARITY} == "none" ];then
+    LOG_PREFIX=${MODEL_NAME}\_t$TENSOR_PARALLEL_SIZE\_d$DATA_PARALLEL_SIZE\_p$PIPELINE_PARALLEL_SIZE\_gbs$GLOBAL_BATCH_SIZE\_mbs$MICRO_BATCH_SIZE\_WAYnone
+    LOG_NAME=${LOG_PREFIX}.log
+    nohup srun \
+    --exclusive=user \
+    -p Big \
+    -N $NNODES \
+    -K \
+    -w $NODELIST \
+    --time 20:00 \
+    --job-name=mmpret \
+	--ntasks-per-node=$GPUS_PER_NODE \
+    --gres=gpu:$GPUS_PER_NODE \
+    --export=ALL \
+	bash ./zPretrain/pretrain_none.sh  > ${LOG_DIR}/${LOG_NAME} 2>&1
 fi
 
 if [ ${RECOMPUTE_GRANULARITY} == "full" ];then
+    export EXPERIMENT_METHOD="${RECOMPUTE_GRANULARITY}_${RECOMPUTE_METHOD}_${RECOMPUTE_NUM_LAYERS}"
+    LOG_PREFIX=${MODEL_NAME}\_t$TENSOR_PARALLEL_SIZE\_d$DATA_PARALLEL_SIZE\_p$PIPELINE_PARALLEL_SIZE\_gbs$GLOBAL_BATCH_SIZE\_mbs$MICRO_BATCH_SIZE\_WAY$EXPERIMENT_METHOD
+    LOG_NAME=${LOG_PREFIX}.log
     nohup srun \
     --exclusive=user \
     -p Big \
@@ -92,5 +101,5 @@ if [ ${RECOMPUTE_GRANULARITY} == "full" ];then
 	--ntasks-per-node=$GPUS_PER_NODE \
     --gres=gpu:$GPUS_PER_NODE \
     --export=ALL \
-	bash pretrain_full.sh  > ${LOG_DIR}/${LOG_NAME} 2>&1
+	bash ./zPretrain/pretrain_full.sh  > ${LOG_DIR}/${LOG_NAME} 2>&1
 fi

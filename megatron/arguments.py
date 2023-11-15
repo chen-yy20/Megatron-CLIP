@@ -847,6 +847,7 @@ def _add_training_args(parser):
     group.add_argument('--exit-signal-handler', action='store_true',
                        help='Dynamically save the checkpoint and shutdown the '
                        'training if SIGTERM is received')
+    group.add_argument('--tensorboard-profile', action='store_true')
     group.add_argument('--tensorboard-dir', type=str, default=None,
                        help='Write TensorBoard logs to this directory.')
     group.add_argument('--no-masked-softmax-fusion',
