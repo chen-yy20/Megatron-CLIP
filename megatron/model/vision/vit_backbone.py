@@ -290,15 +290,15 @@ class CLIP_VitBackbone(MegatronModule):
 
         self.pre_process = pre_process
         self.post_process = post_process
-        self.class_token = args.vOutputTokens
+        self.class_token = args.v_output_tokens
         self.post_layer_norm = post_layer_norm
-        self.hidden_size = args.vHidden
+        self.hidden_size = args.v_hidden_size
         self.patch_dim = args.patch_dim
         self.img_h = args.img_h
         self.img_w = args.img_w
         self.micro_batch_size = args.micro_batch_size
         self.single_token_output = single_token_output
-        self.output_tokens = args.vOutputTokens
+        self.output_tokens = args.v_outputTokens
         self.drop_path_rate = drop_path_rate
         self.input_patchnorm = args.vInputPatchnorm
         self.global_average_pool = args.vGlobalAveragePool

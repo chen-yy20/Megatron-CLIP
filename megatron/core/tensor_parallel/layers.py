@@ -20,6 +20,7 @@ from megatron.core.parallel_state import (
     get_tensor_model_parallel_group,
     get_tensor_model_parallel_rank,
     get_tensor_model_parallel_world_size,
+    is_extra_branch,
 )
 
 from .mappings import (
@@ -339,6 +340,7 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
             dim_size = list(input.size())
             dim_size[0] = dim_size[0] * world_size
 
+            # TODO: 后续此处需要改正
             # 将每个进程的输入张量广播到全局内存缓冲区。这是为了将不同进程的输入数据汇总到同一地方，以便后续计算。将 total_input 设置为归约后的输入数据。
             all_gather_buffer = get_global_memory_buffer().get_tensor(dim_size, input.dtype, "mpu")
             torch.distributed._all_gather_base(

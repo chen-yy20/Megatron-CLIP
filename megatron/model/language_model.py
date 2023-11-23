@@ -415,7 +415,6 @@ class TransformerLanguageModel(MegatronModule):
                 self._pooler_key = 'pooler'
 
             if self.untie_embeddings_and_output_weights:
-                # 在第二階段的过线性层中需要用到列切割方法
                 self.output_layer = tensor_parallel.ColumnParallelLinear(
                     args.hidden_size,
                     args.padded_vocab_size,
@@ -503,6 +502,7 @@ class TransformerLanguageModel(MegatronModule):
 
         if self.post_process:
             if self.add_pooler:
+                # encoder_output [s, b, h]
                 pooled_output = self.pooler(encoder_output,
                                             pooling_sequence_index)
 

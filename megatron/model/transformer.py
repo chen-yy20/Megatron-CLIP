@@ -281,7 +281,7 @@ class SwitchMLP(MegatronModule):
 class CoreAttention(MegatronModule):
 
     def __init__(self, layer_number, config,
-                 attn_mask_type=AttnMaskType.padding, is_extra = False):
+                 attn_mask_type=AttnMaskType.padding):
         super(CoreAttention, self).__init__()
         args = get_args()
         self.fp16 = config.fp16
@@ -294,11 +294,7 @@ class CoreAttention(MegatronModule):
         self.layer_number = max(1, layer_number)
         self.attn_mask_type = attn_mask_type
         self.sequence_parallel = config.sequence_parallel
-        if is_extra:
-            self.attention_head = args.vHidden // args.vHeadWidth
-        else:
-            self.attention_head = config.num_attention_heads
-
+        self.attention_head = config.num_attention_heads
 
         projection_size = config.kv_channels * self.attention_head
 
@@ -491,7 +487,7 @@ class ParallelAttention(MegatronModule):
     def __init__(self, config, layer_number,
                  attention_type=AttnType.self_attn,
                  attn_mask_type=AttnMaskType.padding,
-                 is_extra = False):
+                 ):
         super(ParallelAttention, self).__init__()
         args = get_args()
         self.layer_number = max(1, layer_number)
@@ -503,22 +499,18 @@ class ParallelAttention(MegatronModule):
         self.group_query_attention = args.group_query_attention
         self.num_query_groups = args.num_query_groups
 
+        
+        self.hidden_size = config.hidden_size
+        self.attention_head = config.num_attention_heads
 
-        # Add for CLIP
-        if is_extra:
-            self.hidden_size = args.vHidden
-            self.attention_head = args.vHidden // args.vHeadWidth
-        else:
-            self.hidden_size = config.hidden_size
-            self.attention_head = config.num_attention_heads
-        # TODO: kv_channels is not yet set 
-        self.kv_channels = self.hidden_size // self.attention_head
+        # TODO: kv_channels is not yet set, in fact, what is that?
+        self.kv_channels = config.kv_channels
 
         query_projection_size = config.kv_channels * self.attention_head
         if self.group_query_attention:
-            kv_projection_size = args.kv_channels * args.num_query_groups
+            kv_projection_size = config.kv_channels * args.num_query_groups
         else:
-            kv_projection_size = args.kv_channels * self.attention_head
+            kv_projection_size = config.kv_channels * self.attention_head
 
         self.use_flash_attn = args.use_flash_attn \
             and attention_type == AttnType.self_attn \
@@ -554,7 +546,7 @@ class ParallelAttention(MegatronModule):
         if attention_type == AttnType.self_attn:
             self.query_key_value = tensor_parallel.ColumnParallelLinear(
                 self.hidden_size,
-                query_projection_size + 2 * kv_projection_size,
+                query_projection_size + 2 * kv_projection_size, # output size
                 config=config,
                 init_method=config.init_method,
                 bias=args.add_bias_linear,
@@ -854,12 +846,11 @@ class ParallelTransformerLayer(MegatronModule):
     Transformer layer takes input with size [s, b, h] and returns an
     output of the same size.
     """
-
     def __init__(self, config,
                  layer_number, layer_type=LayerType.encoder,
                  self_attn_mask_type=AttnMaskType.padding,
                  drop_path_rate=0.,
-                 is_extra=False):
+                 ):
                  # retriever=None):
         args = get_args()
 
@@ -875,7 +866,6 @@ class ParallelTransformerLayer(MegatronModule):
 
         # Normalize the input data.
         self.input_norm = get_norm(config)
-        self.is_extra = is_extra
 
         # Self attention.
         self.self_attention = ParallelAttention(
@@ -883,7 +873,7 @@ class ParallelTransformerLayer(MegatronModule):
             layer_number,
             attention_type=AttnType.self_attn,
             attn_mask_type=self_attn_mask_type,
-            is_extra = self.is_extra)
+            )
         self.hidden_dropout = config.hidden_dropout
         self.bias_dropout_fusion = config.bias_dropout_fusion
         self.drop_path = DropPath(drop_path_rate) if drop_path_rate > 0.0 else None
@@ -899,7 +889,8 @@ class ParallelTransformerLayer(MegatronModule):
             self.inter_attention = ParallelAttention(
                 config,
                 layer_number,
-                attention_type=AttnType.cross_attn)
+                attention_type=AttnType.cross_attn,
+                )
             # Normalize the attention output.
             self.post_inter_attention_norm = get_norm(config)
 
@@ -1832,7 +1823,6 @@ class ParallelTransformerForCLIPVision(MegatronModule):
         self.input_tensor = None
         self.drop_path_rate = drop_path_rate
         self.transformer_impl = args.transformer_impl
-        self.retro_add_retriever = args.retro_add_retriever
 
         # Store activation checkpoiting flag.
         self.recompute_granularity = config.recompute_granularity
@@ -1852,11 +1842,11 @@ class ParallelTransformerForCLIPVision(MegatronModule):
         # TODO: 先假设没有流水线并行
         # self.num_layers = _get_num_layers(args, model_type,
         #                                   layer_type==LayerType.decoder)
-        self.num_layers = args.vLayer
+        self.num_layers = config.num_layers
         # 不同层丢弃神经元连接的概率，以列表方式储存，一般靠近输入droppath小，靠近输出droppath大
         self.drop_path_rates = [
             rate.item() for rate in
-            torch.linspace(0, self.drop_path_rate, args.vLayer)]
+            torch.linspace(0, self.drop_path_rate, config.num_layers)]
 
         self.retro_layer_numbers = None
         # Transformer layers.
@@ -1925,7 +1915,7 @@ class ParallelTransformerForCLIPVision(MegatronModule):
 
         if self.post_process and self.post_norm:
             # Final layer norm before output.
-            self.final_norm = get_norm(config, is_extra=True)
+            self.final_norm = get_norm(config)
 
     def _get_layer(self, layer_number):
         return self.layers[layer_number]

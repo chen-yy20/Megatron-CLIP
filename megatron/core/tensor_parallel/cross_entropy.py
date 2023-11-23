@@ -20,7 +20,7 @@ class _VocabParallelCrossEntropy(torch.autograd.Function):
         torch.distributed.all_reduce(
             logits_max, op=torch.distributed.ReduceOp.MAX, group=get_tensor_model_parallel_group()
         )
-        # Subtract the maximum value.
+        # Subtract the maximum value. 防止溢出
         vocab_parallel_logits = vocab_parallel_logits - logits_max.unsqueeze(dim=-1)
 
         # Get the partition's vocab indecies
@@ -30,7 +30,7 @@ class _VocabParallelCrossEntropy(torch.autograd.Function):
         world_size = get_tensor_model_parallel_world_size()
         vocab_start_index, vocab_end_index = get_vocab_range(partition_vocab_size, rank, world_size)
 
-        # Create a mask of valid vocab ids (1 means it needs to be masked).
+        # Create a mask of valid vocab ids (1 means it needs to be masked). Target即是真值
         target_mask = (target < vocab_start_index) | (target >= vocab_end_index)
         masked_target = target.clone() - vocab_start_index
         masked_target[target_mask] = 0
@@ -45,7 +45,7 @@ class _VocabParallelCrossEntropy(torch.autograd.Function):
         predicted_logits_1d = predicted_logits_1d.clone().contiguous()
         predicted_logits = predicted_logits_1d.view_as(target)
         predicted_logits[target_mask] = 0.0
-        # All reduce is needed to get the chunks from other GPUs.
+        # All reduce is needed to get the chunks from other GPUs. 得到[b,s]的logits矩阵
         torch.distributed.all_reduce(
             predicted_logits,
             op=torch.distributed.ReduceOp.SUM,
@@ -53,9 +53,9 @@ class _VocabParallelCrossEntropy(torch.autograd.Function):
         )
 
         # Sum of exponential of logits along vocab dimension across all GPUs.
-        exp_logits = vocab_parallel_logits
-        torch.exp(vocab_parallel_logits, out=exp_logits)
-        sum_exp_logits = exp_logits.sum(dim=-1)
+        exp_logits = vocab_parallel_logits # （b,s,v/N)
+        torch.exp(vocab_parallel_logits, out=exp_logits) 
+        sum_exp_logits = exp_logits.sum(dim=-1) # (b,s)
         torch.distributed.all_reduce(
             sum_exp_logits,
             op=torch.distributed.ReduceOp.SUM,

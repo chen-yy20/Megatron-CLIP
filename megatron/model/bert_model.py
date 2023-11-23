@@ -18,6 +18,7 @@ from .module import MegatronModule
 
 
 def bert_extended_attention_mask(attention_mask):
+    # input shape is : [batch_size, seq_len]
     # We create a 3D attention mask from a 2D tensor mask.
     # [b, 1, s]
     attention_mask_b1s = attention_mask.unsqueeze(1)
@@ -150,6 +151,9 @@ class BertModel(MegatronModule):
         if self.return_embeddings:
             assert self.post_process and self.add_binary_head
 
+        # 返回了transformerlanguagemodel，在这个model中，preprocess会进行embedding（包括position与token）
+        # encoder传入paralleltransformer
+        # postprocess 会增加pooler，在输出层重用输入的embedding
         self.language_model, self._language_model_key = get_language_model(
             config=config,
             num_tokentypes=num_tokentypes,

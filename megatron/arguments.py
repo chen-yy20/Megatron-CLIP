@@ -468,6 +468,48 @@ def vision_transformer_config_from_args(args):
 
     return TransformerConfig(**kw_args)
 
+# CLIP Text and Vision configs
+
+def clip_vision_transformer_config_from_args(args):
+    kw_args = {}
+    for f in dataclasses.fields(TransformerConfig):
+        if hasattr(args, f.name):
+            kw_args[f.name] = getattr(args, f.name)
+    # ================= extra Transformer config ===================
+    kw_args['num_layers'] = args.v_num_layers
+    kw_args['hidden_size'] = args.v_hidden_size
+    kw_args['ffn_hidden_size'] = args.v_ffn_hidden_size
+    kw_args['num_attention_heads'] = args.v_num_attention_heads
+    kw_args['kv_channels'] = args.v_kv_channels
+    kw_args['hidden_dropout'] = args.v_hidden_dropout
+    kw_args['attention_dropout'] = args.v_attention_dropout
+    # ==============================================================
+          
+    kw_args['persist_layer_norm'] = not args.no_persist_layer_norm
+    kw_args['layernorm_zero_centered_gamma'] = args.apply_layernorm_1p
+    kw_args['layernorm_epsilon'] = args.norm_epsilon
+    kw_args['deallocate_pipeline_outputs'] = True
+    kw_args['pipeline_dtype'] = args.params_dtype
+    kw_args['batch_p2p_comm'] = not args.overlap_p2p_comm
+    kw_args['num_moe_experts'] = args.num_experts
+    if args.swiglu:
+        kw_args['activation_func'] = F.silu
+        kw_args['gated_linear_unit'] = True
+        kw_args['bias_gelu_fusion'] = False
+    if args.init_method_xavier_uniform:
+        kw_args['init_method'] = torch.nn.init.xavier_uniform_
+        kw_args['scaled_init_method'] = torch.nn.init.xavier_uniform_
+    if args.group_query_attention:
+        kw_args['num_query_groups'] = args.num_query_groups
+    else:
+        kw_args['num_query_groups'] = None
+
+    return TransformerConfig(**kw_args)
+
+def clip_text_transformer_config_from_args(args):
+    return core_transformer_config_from_args(args)
+
+
 def _add_transformer_engine_args(parser):
     group = parser.add_argument_group(title='Transformer-Engine')
 
@@ -590,6 +632,10 @@ def _add_network_size_args(parser):
     group.add_argument('--group-query-attention', action='store_true',
                           help='Use group-query attention.')
     group.add_argument('--num-query-groups', type=int, default=1)
+
+    # add for clip
+    group.add_argument('--clip-embeded-dim', type=int, default=512,
+                       help='Output dimension of the CLIP model.')
 
     group.add_argument('--max-position-embeddings', type=int, default=None,
                        help='Maximum number of position embeddings to use. '
@@ -1282,15 +1328,28 @@ def _add_vision_args(parser):
     group = parser.add_argument_group(title="vision")
 
     # CLIP Transformer arguments
-    group.add_argument('--vLayer', type=int, default=12,
+    group.add_argument('--v_num_layers', type=int, default=12,
                        help='Number of layers in CLIP Transformer')
-    group.add_argument('--vHidden', type=int, default=768,
+    group.add_argument('--v_hidden_size', type=int, default=768,
                           help='Hidden dimension size in CLIP Transformer')
-    group.add_argument('--vHeadWidth', type=int, default=64,
-                          help='Attention head width in CLIP Transformer')
+    group.add_argument('--v_ffn_hidden_size', type=int, default=4*768,
+                          help='Transformer Feed-Forward Network hidden size. \
+                                This is set to 4*hidden_size if not provided. Defaults to None.')
+    group.add_argument('--v_num_attention_heads', type=int, default=12,
+                          help='Attention head number in CLIP Transformer')
+    group.add_argument('--v_kv_channels', type=int, default=64,
+                          help='Projection weights dimension in multi-head attention. \
+                            This is set to hidden_size // num_attention_heads if not provided. \
+                            Defaults to None.')
+    group.add_argument('v_hidden_dropout', type=float, default=0.1,
+                          help='Hidden dropout probability in CLIP Transformer')
+    group.add_argument('--v_attention_dropout', type=float, default=0.1,
+                       help = 'Attention dropout probability in CLIP Transformer')
+    
+    # TODO: 网络参数更新到这里
     group.add_argument('--vMlpRatio', type=float, default=4.0,
                             help='MLP ratio in CLIP Transformer')
-    group.add_argument('--vPatchDropout', type=float, default=0.0,
+    group.add_argument('--v_patch_dropout', type=float, default=0.0,
                             help='what fraction of patches to dropout during training (0 would mean disabled and no patches dropped) - 0.5 to 0.75 recommended in the paper for optimal results')
     group.add_argument('--vInputPatchnorm', action='store_false',
                             help='whether to use dual patchnorm - would only apply the input layernorm on each patch, as post-layernorm already exist in original clip vit design')
@@ -1302,7 +1361,7 @@ def _add_vision_args(parser):
                        help='n_queries for attentional pooler')
     group.add_argument('--vAttnPoolerHeads', type=int, default=8,
                        help='n heads for attentional_pooling')
-    group.add_argument('--vOutputTokens', action='store_false',
+    group.add_argument('--v_output_tokens', action='store_false',
                        help='whether to output tokens from the last embedding layer')
 
     # general vision arguements

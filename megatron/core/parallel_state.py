@@ -11,20 +11,27 @@ from .utils import GlobalMemoryBuffer
 
 # Intra-layer model parallel group that the current rank belongs to.
 _TENSOR_MODEL_PARALLEL_GROUP = None
+_XTENSOR_MODEL_PARALLEL_GROUP = None
 # Inter-layer model parallel group that the current rank belongs to.
 _PIPELINE_MODEL_PARALLEL_GROUP = None
+_XPIPELINE_MODEL_PARALLEL_GROUP = None
 # Model parallel group (both intra- and pipeline) that the current rank belongs to.
 _MODEL_PARALLEL_GROUP = None
+_XMODEL_PARALLEL_GROUP = None
 # Embedding group.
 _EMBEDDING_GROUP = None
+_XEMBEDDING_GROUP = None
 # Position embedding group.
 _POSITION_EMBEDDING_GROUP = None
+_XPOSITION_EMBEDDING_GROUP = None
 # Data parallel group that the current rank belongs to.
 _DATA_PARALLEL_GROUP = None
+_XDATA_PARALLEL_GROUP = None
 _DATA_PARALLEL_GROUP_GLOO = None
 # tensor model parallel group and data parallel group combined
 # used for fp8 and moe training
 _TENSOR_AND_DATA_PARALLEL_GROUP = None
+_XTENSOR_AND_DATA_PARALLEL_GROUP = None
 # Expert parallel group that the current rank belongs to.
 _TENSOR_AND_EXPERT_PARALLEL_GROUP = None
 _DATA_MODULO_EXPERT_PARALLEL_GROUP = None
@@ -42,17 +49,20 @@ _MPU_PIPELINE_MODEL_PARALLEL_RANK = None
 
 # A list of ranks that have a copy of the embedding.
 _EMBEDDING_GLOBAL_RANKS = None
-
+_XEMBEDDING_GLOBAL_RANKS = None
 # A list of ranks that have a copy of the position embedding.
 _POSITION_EMBEDDING_GLOBAL_RANKS = None
+_XPOSITION_EMBEDDING_GLOBAL_RANKS = None
 
 # A list of global ranks for each pipeline group to ease calculation of the source
 # rank when broadcasting from the first or last pipeline stage.
 _PIPELINE_GLOBAL_RANKS = None
+_XPIPELINE_GLOBAL_RANKS = None
 
 # A list of global ranks for each data parallel group to ease calculation of the source
 # rank when broadcasting weights from src to all other data parallel ranks
 _DATA_PARALLEL_GLOBAL_RANKS = None
+_XDATA_PARALLEL_GLOBAL_RANKS = None
 
 # Context parallel group that the current rank belongs to
 _CONTEXT_PARALLEL_GROUP = None
@@ -62,14 +72,20 @@ _CONTEXT_PARALLEL_GLOBAL_RANKS = None
 
 # Data parallel group information with context parallel combined.
 _DATA_PARALLEL_GROUP_WITH_CP = None
+_XDATA_PARALLEL_GROUP_WITH_CP = None
+
 _DATA_PARALLEL_GROUP_WITH_CP_GLOO = None
 _DATA_PARALLEL_GLOBAL_RANKS_WITH_CP = None
 
 # combined parallel group of TP, DP, and CP used for fp8
 _TENSOR_AND_DATA_PARALLEL_GROUP_WITH_CP = None
+_XTENSOR_AND_DATA_PARALLEL_GROUP_WITH_CP = None
 
 # Memory buffers to avoid dynamic memory allocation
 _GLOBAL_MEMORY_BUFFER = None
+
+# Flag to identify if it is an extra branch
+_IS_EXTRA_BRANCH = None
 
 
 def initialize_model_parallel(
@@ -77,9 +93,13 @@ def initialize_model_parallel(
     pipeline_model_parallel_size: int = 1,
     virtual_pipeline_model_parallel_size: Optional[int] = None,
     pipeline_model_parallel_split_rank: Optional[int] = None,
+    extra_world_size: Optional[int] = None,
+    xtensor_model_parallel_size: Optional[int] = None,
+    xdata_parallel_size: Optional[int] = None, 
     use_sharp: bool = False,
     context_parallel_size: int = 1,
     expert_model_parallel_size: int = 1,
+    is_multi_branch: bool = False, # 表示存在额外的分支
 ) -> None:
     """Initialize model data parallel groups.
 
@@ -169,6 +189,11 @@ def initialize_model_parallel(
     # Get world size and rank. Ensure some consistencies.
     assert torch.distributed.is_initialized()
     world_size: int = torch.distributed.get_world_size()
+    # TODO: 增加关于xTensor Parallel和xdata_parallel的判断
+    if is_multi_branch:
+        assert extra_world_size < world_size, 'GPUs for extra branch must be less than whole world size.'
+        world_size = world_size - extra_world_size
+
 
     if (
         world_size
@@ -184,6 +209,8 @@ def initialize_model_parallel(
     data_parallel_size: int = world_size // (
         tensor_model_parallel_size * pipeline_model_parallel_size * context_parallel_size
     )
+    # no need for xdata_parallel_size, but we can calculate xPP size 
+    xpipeline_model_parallel_size = extra_world_size // (xtensor_model_parallel_size * xdata_parallel_size)
 
     if data_parallel_size % expert_model_parallel_size != 0:
         raise RuntimeError(
@@ -197,7 +224,8 @@ def initialize_model_parallel(
 
     num_tensor_model_parallel_groups: int = world_size // tensor_model_parallel_size
     num_pipeline_model_parallel_groups: int = world_size // pipeline_model_parallel_size
-
+    num_xtensor_model_parallel_groups: int = extra_world_size // xtensor_model_parallel_size
+    num_xpipeline_model_parallel_groups: int = extra_world_size // xpipeline_model_parallel_size
     if virtual_pipeline_model_parallel_size is not None:
         if not pipeline_model_parallel_size > 2:
             raise RuntimeError(
@@ -212,17 +240,28 @@ def initialize_model_parallel(
         global _PIPELINE_MODEL_PARALLEL_SPLIT_RANK
         _PIPELINE_MODEL_PARALLEL_SPLIT_RANK = pipeline_model_parallel_split_rank
 
+    global _IS_EXTRA_BRANCH
     rank = torch.distributed.get_rank()
+    if is_multi_branch:
+        if rank >= world_size:
+            _IS_EXTRA_BRANCH = True
+        else:
+            _IS_EXTRA_BRANCH = False
 
     # Build the data-parallel groups.
     global _DATA_PARALLEL_GROUP
+    global _XDATA_PARALLEL_GROUP
     global _DATA_PARALLEL_GROUP_GLOO
     global _DATA_PARALLEL_GLOBAL_RANKS
+    global _XDATA_PARALLEL_GLOBAL_RANKS
     global _DATA_PARALLEL_GROUP_WITH_CP
+    global _XDATA_PARALLEL_GROUP_WITH_CP
+
     global _DATA_PARALLEL_GROUP_WITH_CP_GLOO
     global _DATA_PARALLEL_GLOBAL_RANKS_WITH_CP
     assert _DATA_PARALLEL_GROUP is None, 'data parallel group is already initialized'
     all_data_parallel_group_ranks_with_cp = []
+    all_xdata_parallel_group_ranks_with_cp = []
     for i in range(pipeline_model_parallel_size):
         start_rank = i * num_pipeline_model_parallel_groups
         end_rank = (i + 1) * num_pipeline_model_parallel_groups
@@ -245,6 +284,31 @@ def initialize_model_parallel(
                 _DATA_PARALLEL_GROUP_WITH_CP = group_with_cp
                 _DATA_PARALLEL_GROUP_WITH_CP_GLOO = group_with_cp_gloo
                 _DATA_PARALLEL_GLOBAL_RANKS_WITH_CP = ranks_with_cp
+
+    if _IS_EXTRA_BRANCH:
+        offset = world_size
+        for i in range(xpipeline_model_parallel_size):
+            start_rank = i * num_xpipeline_model_parallel_groups + offset
+            end_rank = (i + 1) * num_xpipeline_model_parallel_groups + offset
+            for j in range(context_parallel_size * xtensor_model_parallel_size):
+                ranks = range(
+                    start_rank + j, end_rank, context_parallel_size * xtensor_model_parallel_size
+                )
+                group = torch.distributed.new_group(ranks)
+                # group_gloo = torch.distributed.new_group(ranks, backend="gloo")
+                if rank in ranks:
+                    _XDATA_PARALLEL_GROUP = group
+                    # _DATA_PARALLEL_GROUP_GLOO = group_gloo
+                    # _DATA_PARALLEL_GLOBAL_RANKS = ranks
+            for j in range(xtensor_model_parallel_size):
+                ranks_with_cp = range(start_rank + j, end_rank, xtensor_model_parallel_size)
+                all_xdata_parallel_group_ranks_with_cp.append(list(ranks_with_cp))
+                group_with_cp = torch.distributed.new_group(ranks_with_cp)
+                # group_with_cp_gloo = torch.distributed.new_group(ranks_with_cp, backend="gloo")
+                if rank in ranks_with_cp:
+                    _XDATA_PARALLEL_GROUP_WITH_CP = group_with_cp
+                    # _DATA_PARALLEL_GROUP_WITH_CP_GLOO = group_with_cp_gloo
+                    # _DATA_PARALLEL_GLOBAL_RANKS_WITH_CP = ranks_with_cp
 
     # Apply SHARP to DP process groups
     if use_sharp:
@@ -299,6 +363,18 @@ def initialize_model_parallel(
         if rank in ranks:
             _MODEL_PARALLEL_GROUP = group
 
+    global _XMODEL_PARALLEL_GROUP
+    if is_extra_branch():
+        assert _XMODEL_PARALLEL_GROUP is None, 'model parallel group is already initialized'
+        for i in range(xdata_parallel_size * context_parallel_size):
+            ranks = [
+                xdata_parallel_group_ranks_with_cp[i]
+                for xdata_parallel_group_ranks_with_cp in all_xdata_parallel_group_ranks_with_cp
+            ]
+            group = torch.distributed.new_group(ranks)
+            if rank in ranks:
+                _XMODEL_PARALLEL_GROUP = group
+
     # Build the tensor model-parallel groups.
     global _TENSOR_MODEL_PARALLEL_GROUP
     assert (
@@ -309,6 +385,14 @@ def initialize_model_parallel(
         group = torch.distributed.new_group(ranks)
         if rank in ranks:
             _TENSOR_MODEL_PARALLEL_GROUP = group
+    
+    if _IS_EXTRA_BRANCH:
+        global _XTENSOR_MODEL_PARALLEL_GROUP
+        for i in range (num_xtensor_model_parallel_groups):
+            ranks = range(i * xtensor_model_parallel_size + offset, (i + 1) * xtensor_model_parallel_size + offset)
+            group = torch.distributed.new_group(ranks)
+            if rank in ranks:
+                _XTENSOR_MODEL_PARALLEL_GROUP = group
 
     # Build the pipeline model-parallel groups and embedding groups
     # (first and last rank in each pipeline model-parallel group).
@@ -359,6 +443,55 @@ def initialize_model_parallel(
         if rank in ranks:
             _POSITION_EMBEDDING_GLOBAL_RANKS = position_embedding_ranks
 
+    # Copy for an extra transformer
+    if _IS_EXTRA_BRANCH:
+        global _XPIPELINE_MODEL_PARALLEL_GROUP
+        global _XPIPELINE_GLOBAL_RANKS
+        assert (
+            _XPIPELINE_MODEL_PARALLEL_GROUP is None
+        ), 'Xpipeline model parallel group is already initialized'
+        global _XEMBEDDING_GROUP
+        global _XEMBEDDING_GLOBAL_RANKS
+        assert _XEMBEDDING_GROUP is None, 'Xembedding group is already initialized'
+        global _XPOSITION_EMBEDDING_GROUP
+        global _XPOSITION_EMBEDDING_GLOBAL_RANKS
+        assert _XPOSITION_EMBEDDING_GROUP is None, 'Xposition embedding group is already initialized'
+        for i in range(num_xpipeline_model_parallel_groups):
+            ranks = range(i + offset, world_size + extra_world_size, num_xpipeline_model_parallel_groups)
+            group = torch.distributed.new_group(ranks)
+            if rank in ranks:
+                _XPIPELINE_MODEL_PARALLEL_GROUP = group
+                _XPIPELINE_GLOBAL_RANKS = ranks
+            # Setup embedding group (to exchange gradients between
+            # first and last stages).
+            if len(ranks) > 1:
+                embedding_ranks = [ranks[0], ranks[-1]]
+                position_embedding_ranks = [ranks[0]]
+                if pipeline_model_parallel_split_rank is not None:
+                    if ranks[pipeline_model_parallel_split_rank] not in embedding_ranks:
+                        embedding_ranks = [
+                            ranks[0],
+                            ranks[pipeline_model_parallel_split_rank],
+                            ranks[-1],
+                        ]
+                    if ranks[pipeline_model_parallel_split_rank] not in position_embedding_ranks:
+                        position_embedding_ranks = [ranks[0], ranks[pipeline_model_parallel_split_rank]]
+            else:
+                embedding_ranks = ranks
+                position_embedding_ranks = ranks
+
+            group = torch.distributed.new_group(embedding_ranks)
+            if rank in embedding_ranks:
+                _XEMBEDDING_GROUP = group
+            if rank in ranks:
+                _XEMBEDDING_GLOBAL_RANKS= embedding_ranks
+
+            group = torch.distributed.new_group(position_embedding_ranks)
+            if rank in position_embedding_ranks:
+                _XPOSITION_EMBEDDING_GROUP = group
+            if rank in ranks:
+                _XPOSITION_EMBEDDING_GLOBAL_RANKS = position_embedding_ranks
+
     # Build the tensor + data parallel groups.
     global _TENSOR_AND_DATA_PARALLEL_GROUP
     global _TENSOR_AND_DATA_PARALLEL_GROUP_WITH_CP
@@ -388,6 +521,36 @@ def initialize_model_parallel(
             group = torch.distributed.new_group(ranks)
             if rank in ranks:
                 _TENSOR_AND_DATA_PARALLEL_GROUP = group
+    # Copy for an extra transformer
+    if _IS_EXTRA_BRANCH:
+        global _XTENSOR_AND_DATA_PARALLEL_GROUP
+        global _XTENSOR_AND_DATA_PARALLEL_GROUP_WITH_CP
+        assert (
+            _XTENSOR_AND_DATA_PARALLEL_GROUP is None
+        ), 'XTensor + data parallel group is already initialized'
+        xtensor_and_data_group_size_with_cp: int = xtensor_model_parallel_size * xdata_parallel_size * context_parallel_size
+        num_xtensor_and_data_groups_with_cp: int = extra_world_size // xtensor_and_data_group_size_with_cp
+        for i in range(num_xtensor_and_data_groups_with_cp):
+            start_rank = i * xtensor_and_data_group_size_with_cp + offset
+            end_rank = start_rank + xtensor_and_data_group_size_with_cp
+            ranks = range(start_rank, end_rank)
+            group = torch.distributed.new_group(ranks)
+            if rank in ranks:
+                _XTENSOR_AND_DATA_PARALLEL_GROUP_WITH_CP = group
+
+            for j in range(context_parallel_size):
+                ranks = []
+                for k in range(xdata_parallel_size):
+                    start_rank = (
+                        i * xtensor_and_data_group_size_with_cp
+                        + j * xtensor_model_parallel_size
+                        + k * xtensor_model_parallel_size * context_parallel_size + offset
+                    )
+                    end_rank = start_rank + xtensor_model_parallel_size
+                    ranks = ranks + list(range(start_rank, end_rank))
+                group = torch.distributed.new_group(ranks)
+                if rank in ranks:
+                    _XTENSOR_AND_DATA_PARALLEL_GROUP = group
 
     # Build the tensor + expert parallel groups
     global _TENSOR_AND_EXPERT_PARALLEL_GROUP
@@ -448,9 +611,20 @@ def get_model_parallel_group():
     assert _MODEL_PARALLEL_GROUP is not None, 'model parallel group is not initialized'
     return _MODEL_PARALLEL_GROUP
 
+def is_extra_branch():
+    """Check if it is an extra branch"""
+    assert _IS_EXTRA_BRANCH is not None, 'IS EXTRA BRANCH is not initialized'
+    return _IS_EXTRA_BRANCH
+
 
 def get_tensor_model_parallel_group(check_initialized=True):
     """Get the tensor model parallel group the caller rank belongs to."""
+    if is_extra_branch():
+        if check_initialized:
+            assert(
+                _XTENSOR_MODEL_PARALLEL_GROUP is not None
+            ), 'xtensor model parallel group is not initialized'
+        return _XTENSOR_MODEL_PARALLEL_GROUP
     if check_initialized:
         assert (
             _TENSOR_MODEL_PARALLEL_GROUP is not None
@@ -460,6 +634,11 @@ def get_tensor_model_parallel_group(check_initialized=True):
 
 def get_pipeline_model_parallel_group():
     """Get the pipeline model parallel group the caller rank belongs to."""
+    if is_extra_branch():
+        assert (
+            _XPIPELINE_MODEL_PARALLEL_GROUP is not None
+        ), 'xpipeline model parallel group is not initialized'
+        return _XPIPELINE_MODEL_PARALLEL_GROUP
     assert (
         _PIPELINE_MODEL_PARALLEL_GROUP is not None
     ), 'pipeline_model parallel group is not initialized'
@@ -468,6 +647,17 @@ def get_pipeline_model_parallel_group():
 
 def get_data_parallel_group(with_context_parallel=False):
     """Get the data parallel group the caller rank belongs to."""
+    if is_extra_branch():
+        if with_context_parallel:
+            assert (
+                _XDATA_PARALLEL_GROUP_WITH_CP is not None
+            ), 'xdata parallel group with context parallel combined is not initialized'
+            return _XDATA_PARALLEL_GROUP_WITH_CP
+        else:
+            assert (
+                _XDATA_PARALLEL_GROUP is not None
+            ), 'xdata parallel group is not initialized'
+            return _XDATA_PARALLEL_GROUP
     if with_context_parallel:
         assert (
             _DATA_PARALLEL_GROUP_WITH_CP is not None
@@ -534,6 +724,18 @@ def get_amax_reduction_group(with_context_parallel=False):
 
 def get_tensor_and_data_parallel_group(with_context_parallel=False):
     """Get the tensor and data parallel group the caller rank belongs to."""
+    if is_extra_branch():
+        if with_context_parallel:
+            assert (
+                _XTENSOR_AND_DATA_PARALLEL_GROUP_WITH_CP is not None
+            ), 'xtensor and xdata parallel group with context parallel combined is not initialized'
+            return _XTENSOR_AND_DATA_PARALLEL_GROUP_WITH_CP
+        else:
+            assert (
+                _XTENSOR_AND_DATA_PARALLEL_GROUP is not None
+            ), 'xtensor and xdata parallel group is not initialized'
+            return _XTENSOR_AND_DATA_PARALLEL_GROUP
+
     if with_context_parallel:
         assert (
             _TENSOR_AND_DATA_PARALLEL_GROUP_WITH_CP is not None
@@ -580,6 +782,8 @@ def set_virtual_pipeline_model_parallel_world_size(world_size):
 
 def get_tensor_model_parallel_world_size():
     """Return world size for the tensor model parallel group."""
+    if is_extra_branch():
+        return torch.distributed.get_world_size(group=get_tensor_model_parallel_group())
     global _MPU_TENSOR_MODEL_PARALLEL_WORLD_SIZE
     if _MPU_TENSOR_MODEL_PARALLEL_WORLD_SIZE is not None:
         return _MPU_TENSOR_MODEL_PARALLEL_WORLD_SIZE
@@ -588,6 +792,8 @@ def get_tensor_model_parallel_world_size():
 
 def get_pipeline_model_parallel_world_size():
     """Return world size for the pipeline model parallel group."""
+    if is_extra_branch():
+        return torch.distributed.get_world_size(group=get_pipeline_model_parallel_group())
     global _MPU_PIPELINE_MODEL_PARALLEL_WORLD_SIZE
     if _MPU_PIPELINE_MODEL_PARALLEL_WORLD_SIZE is not None:
         return _MPU_PIPELINE_MODEL_PARALLEL_WORLD_SIZE
@@ -622,6 +828,8 @@ def get_tensor_model_parallel_rank():
 
 def get_pipeline_model_parallel_rank():
     """Return my rank for the pipeline model parallel group."""
+    if is_extra_branch():
+        return torch.distributed.get_rank(group=get_pipeline_model_parallel_group())
     global _MPU_PIPELINE_MODEL_PARALLEL_RANK
     if _MPU_PIPELINE_MODEL_PARALLEL_RANK is not None:
         return _MPU_PIPELINE_MODEL_PARALLEL_RANK
@@ -873,11 +1081,9 @@ def destroy_global_memory_buffer():
     global _GLOBAL_MEMORY_BUFFER
     _GLOBAL_MEMORY_BUFFER = None
 
-
 def destroy_model_parallel():
     """Set the groups to none."""
     global _MODEL_PARALLEL_GROUP
-    _MODEL_PARALLEL_GROUP = None
     global _TENSOR_MODEL_PARALLEL_GROUP
     _TENSOR_MODEL_PARALLEL_GROUP = None
     global _PIPELINE_MODEL_PARALLEL_GROUP
@@ -916,3 +1122,23 @@ def destroy_model_parallel():
     _MPU_PIPELINE_MODEL_PARALLEL_RANK = None
     global _GLOBAL_MEMORY_BUFFER
     _GLOBAL_MEMORY_BUFFER = None
+
+    if is_extra_branch():
+        global _XMODEL_PARALLEL_GROUP
+        global _XTENSOR_MODEL_PARALLEL_GROUP
+        _XTENSOR_MODEL_PARALLEL_GROUP = None
+        global _XPIPELINE_MODEL_PARALLEL_GROUP
+        _XPIPELINE_MODEL_PARALLEL_GROUP = None
+        global _XDATA_PARALLEL_GROUP
+        _XDATA_PARALLEL_GROUP = None
+        global _XDATA_PARALLEL_GROUP_WITH_CP
+        _XDATA_PARALLEL_GROUP_WITH_CP = None
+        global _XEMBEDDING_GROUP
+        _XEMBEDDING_GROUP = None
+        global _XPOSITION_EMBEDDING_GROUP
+        _XPOSITION_EMBEDDING_GROUP = None
+        global _XTENSOR_AND_DATA_PARALLEL_GROUP
+        _XTENSOR_AND_DATA_PARALLEL_GROUP = None
+        global _XTENSOR_AND_DATA_PARALLEL_GROUP_WITH_CP
+        _XTENSOR_AND_DATA_PARALLEL_GROUP_WITH_CP = None
+       
