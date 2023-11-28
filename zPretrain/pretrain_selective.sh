@@ -58,7 +58,8 @@ exec python \
         --init-method-std 0.002 \
         --fp16 \
         --recompute-granularity selective \
-        --tensorboard-profile \
+        # --num-layers-per-virtual-pipeline-stage 1 \
+        # --tensorboard-profile \
         # --tensorboard-dir ./tensorboard \
         # --log-memory-to-tensorboard \
         # --log-timers-to-tensorboard

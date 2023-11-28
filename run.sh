@@ -82,4 +82,4 @@ srun \
 	--ntasks-per-node=$GPUS_PER_NODE \
     --gres=gpu:$GPUS_PER_NODE \
     --export=ALL \
-        bash pretrain.sh
+        bash ./zPretrain/pretrain_selective.sh

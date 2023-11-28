@@ -7,7 +7,6 @@ from typing import Optional
 
 import torch
 import torch.distributed
-
 from .utils import GlobalMemoryBuffer
 
 # Intra-layer model parallel group that the current rank belongs to.

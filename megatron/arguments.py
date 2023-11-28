@@ -16,6 +16,7 @@ from tools.retro.utils import get_args_path as get_retro_args_path
 from megatron.core.transformer import TransformerConfig
 
 
+
 def parse_args(extra_args_provider=None, ignore_unknown_args=False):
     """Parse all arguments."""
     parser = argparse.ArgumentParser(description='Megatron-LM Arguments',
@@ -1093,8 +1094,12 @@ def _add_distributed_args(parser):
 
     group.add_argument('--tensor-model-parallel-size', type=int, default=1,
                        help='Degree of tensor model parallelism.')
+    group.add_argument('--xtensor-model-parallel-size', type=int, default=1,
+                       help='Degree of extra tensor model parallelism.')
     group.add_argument('--pipeline-model-parallel-size', type=int, default=1,
                        help='Degree of pipeline model parallelism.')
+    group.add_argument('--xpipeline-model-parallel-size', type=int, default=1,
+                       help='Degree of extra pipeline model parallelism.')
     group.add_argument('--pipeline-model-parallel-split-rank',
                        type=int, default=None,
                        help='Rank where encoder and decoder should be split.')
@@ -1328,40 +1333,40 @@ def _add_vision_args(parser):
     group = parser.add_argument_group(title="vision")
 
     # CLIP Transformer arguments
-    group.add_argument('--v_num_layers', type=int, default=12,
+    group.add_argument('--v-num-layers', type=int, default=12,
                        help='Number of layers in CLIP Transformer')
-    group.add_argument('--v_hidden_size', type=int, default=768,
+    group.add_argument('--v-hidden-size', type=int, default=768,
                           help='Hidden dimension size in CLIP Transformer')
-    group.add_argument('--v_ffn_hidden_size', type=int, default=4*768,
+    group.add_argument('--v-ffn-hidden_size', type=int, default=4*768,
                           help='Transformer Feed-Forward Network hidden size. \
                                 This is set to 4*hidden_size if not provided. Defaults to None.')
-    group.add_argument('--v_num_attention_heads', type=int, default=12,
+    group.add_argument('--v-num-attention_heads', type=int, default=12,
                           help='Attention head number in CLIP Transformer')
-    group.add_argument('--v_kv_channels', type=int, default=64,
+    group.add_argument('--v-kv-channels', type=int, default=64,
                           help='Projection weights dimension in multi-head attention. \
                             This is set to hidden_size // num_attention_heads if not provided. \
                             Defaults to None.')
-    group.add_argument('v_hidden_dropout', type=float, default=0.1,
+    group.add_argument('--v-hidden-dropout', type=float, default=0.1,
                           help='Hidden dropout probability in CLIP Transformer')
-    group.add_argument('--v_attention_dropout', type=float, default=0.1,
+    group.add_argument('--v-attention_dropout', type=float, default=0.1,
                        help = 'Attention dropout probability in CLIP Transformer')
     
     # TODO: 网络参数更新到这里
-    group.add_argument('--vMlpRatio', type=float, default=4.0,
+    group.add_argument('--v-mlp-ratio', type=float, default=4.0,
                             help='MLP ratio in CLIP Transformer')
-    group.add_argument('--v_patch_dropout', type=float, default=0.0,
+    group.add_argument('--v-patch-dropout', type=float, default=0.0,
                             help='what fraction of patches to dropout during training (0 would mean disabled and no patches dropped) - 0.5 to 0.75 recommended in the paper for optimal results')
-    group.add_argument('--vInputPatchnorm', action='store_false',
+    group.add_argument('--v-input-patchnorm', action='store_false',
                             help='whether to use dual patchnorm - would only apply the input layernorm on each patch, as post-layernorm already exist in original clip vit design')
-    group.add_argument('--vGlobalAveragePool', action='store_false',
+    group.add_argument('--v-global-averagePool', action='store_false',
                        help='whether to global average pool the last embedding layer, instead of using CLS token (https://arxiv.org/abs/2205.01580)')
-    group.add_argument('--vAttentionalPool', action='store_false',
+    group.add_argument('--v-attentional-pool', action='store_false',
                        help='whether to use attentional pooler in the last embedding layer')
-    group.add_argument('--vNQueries', type=int, default=256,
+    group.add_argument('--v-nqueries', type=int, default=256,
                        help='n_queries for attentional pooler')
-    group.add_argument('--vAttnPoolerHeads', type=int, default=8,
+    group.add_argument('--v-attn-pooler-heads', type=int, default=8,
                        help='n heads for attentional_pooling')
-    group.add_argument('--v_output_tokens', action='store_false',
+    group.add_argument('--v-output-tokens', action='store_false',
                        help='whether to output tokens from the last embedding layer')
 
     # general vision arguements
