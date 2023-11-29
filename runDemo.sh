@@ -85,4 +85,4 @@ srun \
 	--ntasks-per-node=$GPUS_PER_NODE \
     --gres=gpu:$GPUS_PER_NODE \
     --export=ALL \
-        bash zDemo.sh
+    bash zDemo.sh

@@ -21,11 +21,10 @@ torch.distributed.barrier()
 # )
 initialize_model_parallel(
     tensor_model_parallel_size=1,
-    pipeline_model_parallel_size=4,
-    extra_world_size= 8,
+    pipeline_model_parallel_size=2,
+    extra_world_size= 6,
     xtensor_model_parallel_size=1,
     xpipeline_model_parallel_size=2,
-    is_multi_branch=True
 )
 
 # step 1 : initialize megatron

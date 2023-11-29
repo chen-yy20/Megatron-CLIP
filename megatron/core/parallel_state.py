@@ -7,6 +7,7 @@ from typing import Optional
 
 import torch
 import torch.distributed
+
 from .utils import GlobalMemoryBuffer
 
 # Intra-layer model parallel group that the current rank belongs to.
@@ -87,6 +88,13 @@ _IS_EXTRA_BRANCH = None
 _HAVE_EXTRA_BRANCH = None
 _REAL_WORLD_SIZE = None
 
+# def print_rank_0(message):
+#     """If distributed is initialized, print only on rank 0."""
+#     if torch.distributed.is_initialized():
+#         if torch.distributed.get_rank() == 0:
+#             print(message, flush=True)
+#     else:
+#         print(message, flush=True)
 
 def initialize_model_parallel(
     tensor_model_parallel_size: int = 1,
@@ -99,7 +107,6 @@ def initialize_model_parallel(
     use_sharp: bool = False,
     context_parallel_size: int = 1,
     expert_model_parallel_size: int = 1,
-    is_multi_branch: bool = False, # 表示存在额外的分支
 ) -> None:
     """Initialize model data parallel groups.
 
@@ -189,6 +196,7 @@ def initialize_model_parallel(
     # Get world size and rank. Ensure some consistencies.
     assert torch.distributed.is_initialized()
     world_size: int = torch.distributed.get_world_size()
+    is_multi_branch = True if extra_world_size is not None else False
 
     # 对两个world的初始化
         
@@ -198,9 +206,17 @@ def initialize_model_parallel(
     _REAL_WORLD_SIZE = world_size
     rank = torch.distributed.get_rank()
     offset = 0
+    real_tensor_model_parallel_size = tensor_model_parallel_size
+    real_pipeline_model_parallel_size = pipeline_model_parallel_size
+    data_parallel_size = world_size // (tensor_model_parallel_size * pipeline_model_parallel_size * context_parallel_size)
+    xdata_parallel_size = extra_world_size // (xtensor_model_parallel_size * xpipeline_model_parallel_size * context_parallel_size)
+    ori_world_size = world_size - extra_world_size
+    
     def print_rank_0(msg):
         if rank == 0 or rank - offset == 0:
-            print(msg)
+            print(msg, flush=True)
+        torch.distributed.barrier()
+    
     if is_multi_branch:
         assert extra_world_size < world_size, 'GPUs for extra branch must be less than whole world size.'
         _HAVE_EXTRA_BRANCH = True
@@ -209,10 +225,11 @@ def initialize_model_parallel(
             offset = world_size - extra_world_size
             world_size = extra_world_size
             _REAL_WORLD_SIZE = world_size
-            print(f"Rank {rank} is an extra branch. World size {get_real_world_size()}")
+            # print(f"Rank {rank} is an extra branch. World size {get_real_world_size()}")
             # print("Ready to set new TP PP DP world size...")
-            tensor_model_parallel_size = xtensor_model_parallel_size
-            pipeline_model_parallel_size = xpipeline_model_parallel_size
+            real_tensor_model_parallel_size = xtensor_model_parallel_size
+            real_pipeline_model_parallel_size = xpipeline_model_parallel_size
+            
         else:
             _IS_EXTRA_BRANCH = False
             offset = 0
@@ -223,9 +240,10 @@ def initialize_model_parallel(
     else:
         _HAVE_EXTRA_BRANCH = False
 
+    
     if (
         world_size
-        % (tensor_model_parallel_size * pipeline_model_parallel_size * context_parallel_size)
+        % (real_tensor_model_parallel_size * real_pipeline_model_parallel_size * context_parallel_size)
         != 0
     ):
         raise RuntimeError(
@@ -233,26 +251,24 @@ def initialize_model_parallel(
             f"({tensor_model_parallel_size}) x pipeline_model_parallel_size ({pipeline_model_parallel_size}) "
             f"x context_parallel_size ({context_parallel_size})"
         )
-
-    data_parallel_size: int = world_size // (
-        tensor_model_parallel_size * pipeline_model_parallel_size * context_parallel_size
+    real_data_parallel_size: int = world_size // (
+        real_tensor_model_parallel_size * real_pipeline_model_parallel_size * context_parallel_size
     )
-
-    if data_parallel_size % expert_model_parallel_size != 0:
+    if real_data_parallel_size % expert_model_parallel_size != 0:
         raise RuntimeError(
-            f"data_parallel_size ({data_parallel_size}) is not divisible by expert_model_parallel_size "
+            f"data_parallel_size ({real_data_parallel_size}) is not divisible by expert_model_parallel_size "
         )
 
     if expert_model_parallel_size > 1 and context_parallel_size > 1:
         raise RuntimeError(
             f"combination of expert model prallellism and context parallelism is not supported"
         )
-
-    num_tensor_model_parallel_groups: int = world_size // tensor_model_parallel_size
-    num_pipeline_model_parallel_groups: int = world_size // pipeline_model_parallel_size
+    
+    num_tensor_model_parallel_groups: int = world_size // real_tensor_model_parallel_size
+    num_pipeline_model_parallel_groups: int = world_size // real_pipeline_model_parallel_size
 
     if virtual_pipeline_model_parallel_size is not None:
-        if not pipeline_model_parallel_size > 2:
+        if not real_pipeline_model_parallel_size > 2:
             raise RuntimeError(
                 "pipeline-model-parallel size should be greater than 2 with interleaved schedule"
             )
@@ -265,7 +281,6 @@ def initialize_model_parallel(
         global _PIPELINE_MODEL_PARALLEL_SPLIT_RANK
         _PIPELINE_MODEL_PARALLEL_SPLIT_RANK = pipeline_model_parallel_split_rank
 
-    
     print_rank_0("========================================================")
     # Build the data-parallel groups.
     # FIXME: This is a hacky way to build the data parallel groups.
@@ -279,24 +294,48 @@ def initialize_model_parallel(
     global _DATA_PARALLEL_GLOBAL_RANKS_WITH_CP
     assert _DATA_PARALLEL_GROUP is None, 'data parallel group is already initialized'
     all_data_parallel_group_ranks_with_cp = []
-    for i in range(pipeline_model_parallel_size):
+
+    former_ranks = []   
+    ranks = []
+
+    max_pp_step = max(pipeline_model_parallel_size, xpipeline_model_parallel_size)
+    for i in range(max_pp_step):
         start_rank = i * num_pipeline_model_parallel_groups + offset
         end_rank = (i + 1) * num_pipeline_model_parallel_groups + offset
-        for j in range(context_parallel_size * tensor_model_parallel_size):
-            ranks = range(
-                start_rank + j, end_rank, context_parallel_size * tensor_model_parallel_size
-            )
+
+        # tp_step = max(context_parallel_size * tensor_model_parallel_size, context_parallel_size * xtensor_model_parallel_size)
+        tp_step = context_parallel_size * real_tensor_model_parallel_size
+        max_tp_step = max(context_parallel_size * tensor_model_parallel_size, context_parallel_size * xtensor_model_parallel_size)
+        # print(f"local rank={rank}, start rank={start_rank}, end rank={end_rank}, step={tp_step}", flush=True)
+        for j in range(max_tp_step):
+            ranks = range(start_rank + j, end_rank, tp_step)
+            if j >= tp_step:
+                ranks = former_ranks
+            else:
+                former_ranks = ranks
+
             print_rank_0(f"DP group: {ranks}")
             group = torch.distributed.new_group(ranks)
+            # print_rank_0(f"Rank={rank} finished inner loop {j}!")
+            torch.distributed.barrier()
             # group_gloo = torch.distributed.new_group(ranks, backend="gloo")
             
             if rank in ranks:
+                # print(f"add rank={rank} to group={group}")
                 _DATA_PARALLEL_GROUP = group
                 # _DATA_PARALLEL_GROUP_GLOO = group_gloo
                 _DATA_PARALLEL_GLOBAL_RANKS = ranks
-        for j in range(tensor_model_parallel_size):
-            ranks_with_cp = range(start_rank + j, end_rank, tensor_model_parallel_size)
-            all_data_parallel_group_ranks_with_cp.append(list(ranks_with_cp))
+        
+        # print_rank_0(f"Rank={rank} finish group {i}!")
+    
+        for j in range(max(tensor_model_parallel_size, xtensor_model_parallel_size)):
+            ranks_with_cp = range(start_rank + j, end_rank, real_tensor_model_parallel_size)
+            if j >= real_tensor_model_parallel_size:
+                ranks_with_cp = former_ranks
+            else:
+                former_ranks = ranks_with_cp
+                all_data_parallel_group_ranks_with_cp.append(list(ranks_with_cp))
+            # print(f"tmp -- local rank={rank}, tensor_model_parallel group: {ranks_with_cp}", flush=True)
             group_with_cp = torch.distributed.new_group(ranks_with_cp)
             # group_with_cp_gloo = torch.distributed.new_group(ranks_with_cp, backend="gloo")
             if rank in ranks_with_cp:
@@ -306,7 +345,6 @@ def initialize_model_parallel(
     torch.distributed.barrier()
     print_rank_0("========================================================")
     
-
     # Apply SHARP to DP process groups
     if use_sharp:
         if rank == 0:
@@ -331,22 +369,27 @@ def initialize_model_parallel(
     global _CONTEXT_PARALLEL_GROUP
     global _CONTEXT_PARALLEL_GLOBAL_RANKS
     assert _CONTEXT_PARALLEL_GROUP is None, 'context parallel group is already initialized'
-    for i in range(pipeline_model_parallel_size):
-        for j in range(data_parallel_size):
+    for i in range(max(pipeline_model_parallel_size, xpipeline_model_parallel_size)):
+        for j in range(max(data_parallel_size, xdata_parallel_size)):
             start_rank = (
                 i * num_pipeline_model_parallel_groups
-                + j * tensor_model_parallel_size * context_parallel_size
+                + j * real_tensor_model_parallel_size * context_parallel_size
                 + offset
             )
             end_rank = (
                 i * num_pipeline_model_parallel_groups
-                + (j + 1) * tensor_model_parallel_size * context_parallel_size
+                + (j + 1) * real_tensor_model_parallel_size * context_parallel_size
                 + offset
             )
-            for k in range(tensor_model_parallel_size):
-                ranks = range(start_rank + k, end_rank, tensor_model_parallel_size)
-                group = torch.distributed.new_group(ranks)
+            for k in range(max(tensor_model_parallel_size, xtensor_model_parallel_size)):
+                ranks = range(start_rank + k, end_rank, real_tensor_model_parallel_size)
+                if k >= real_tensor_model_parallel_size or j >= real_data_parallel_size or i >= real_pipeline_model_parallel_size:
+                    ranks = former_ranks
+                else:
+                    former_ranks = ranks
                 print_rank_0(f"CP group: {ranks}")
+                group = torch.distributed.new_group(ranks)
+                
                 if rank in ranks:
                     _CONTEXT_PARALLEL_GROUP = group
                     _CONTEXT_PARALLEL_GLOBAL_RANKS = ranks
@@ -354,24 +397,31 @@ def initialize_model_parallel(
     # Build the model-parallel groups.
     global _MODEL_PARALLEL_GROUP
     assert _MODEL_PARALLEL_GROUP is None, 'model parallel group is already initialized'
-    for i in range(data_parallel_size * context_parallel_size):
-        ranks = [
-            data_parallel_group_ranks_with_cp[i]
-            for data_parallel_group_ranks_with_cp in all_data_parallel_group_ranks_with_cp
-        ]
+    # print_rank_0(all_data_parallel_group_ranks_with_cp)
+    for i in range(max(data_parallel_size * context_parallel_size, xdata_parallel_size * context_parallel_size)):
+        if i < real_data_parallel_size * context_parallel_size:
+            ranks = [
+                data_parallel_group_ranks_with_cp[i]
+                for data_parallel_group_ranks_with_cp in all_data_parallel_group_ranks_with_cp
+            ]
+            former_ranks = ranks
+        else:
+            ranks = former_ranks
         print_rank_0(f"Model parallel group: {ranks}")
         group = torch.distributed.new_group(ranks)   
         if rank in ranks:
             _MODEL_PARALLEL_GROUP = group
 
     print_rank_0("========================================================")
+
     # Build the tensor model-parallel groups.
     global _TENSOR_MODEL_PARALLEL_GROUP
     assert (
         _TENSOR_MODEL_PARALLEL_GROUP is None
     ), 'tensor model parallel group is already initialized'
-    for i in range(num_tensor_model_parallel_groups):
-        ranks = range(i * tensor_model_parallel_size + offset, (i + 1) * tensor_model_parallel_size + offset)
+    for i in range(max(ori_world_size // tensor_model_parallel_size, extra_world_size // xtensor_model_parallel_size)):
+        if i < num_tensor_model_parallel_groups:
+            ranks = range(i * real_tensor_model_parallel_size + offset, (i + 1) * real_tensor_model_parallel_size + offset)
         group = torch.distributed.new_group(ranks)
         print_rank_0(f"Tensor model parallel group: {ranks}")
         if rank in ranks:
@@ -392,8 +442,9 @@ def initialize_model_parallel(
     global _POSITION_EMBEDDING_GROUP
     global _POSITION_EMBEDDING_GLOBAL_RANKS
     assert _POSITION_EMBEDDING_GROUP is None, 'position embedding group is already initialized'
-    for i in range(num_pipeline_model_parallel_groups):
-        ranks = range(i + offset, world_size + offset, num_pipeline_model_parallel_groups)
+    for i in range(max(ori_world_size // pipeline_model_parallel_size, extra_world_size // xpipeline_model_parallel_size)):
+        if i < num_pipeline_model_parallel_groups:
+            ranks = range(i + offset, world_size + offset, num_pipeline_model_parallel_groups)
         group = torch.distributed.new_group(ranks)
         print_rank_0(f"Pipeline model parallel group: {ranks}")
         if rank in ranks:
@@ -437,12 +488,14 @@ def initialize_model_parallel(
     assert (
         _TENSOR_AND_DATA_PARALLEL_GROUP is None
     ), 'Tensor + data parallel group is already initialized'
-    tensor_and_data_group_size_with_cp: int = tensor_model_parallel_size * data_parallel_size * context_parallel_size
+    tensor_and_data_group_size_with_cp: int = real_tensor_model_parallel_size * real_data_parallel_size * context_parallel_size
     num_tensor_and_data_groups_with_cp: int = world_size // tensor_and_data_group_size_with_cp
-    for i in range(num_tensor_and_data_groups_with_cp):
-        start_rank = i * tensor_and_data_group_size_with_cp + offset
-        end_rank = start_rank + tensor_and_data_group_size_with_cp
-        ranks = range(start_rank, end_rank)
+    for i in range(max(ori_world_size // (tensor_model_parallel_size * data_parallel_size * context_parallel_size), 
+                       extra_world_size // (xtensor_model_parallel_size * xdata_parallel_size * context_parallel_size))):
+        if i < num_tensor_and_data_groups_with_cp:
+            start_rank = i * tensor_and_data_group_size_with_cp + offset
+            end_rank = start_rank + tensor_and_data_group_size_with_cp
+            ranks = range(start_rank, end_rank)
         print_rank_0(f"Tensor + data parallel group with CP: {ranks}")
         group = torch.distributed.new_group(ranks)
         
@@ -451,17 +504,18 @@ def initialize_model_parallel(
 
         for j in range(context_parallel_size):
             ranks = []
-            for k in range(data_parallel_size):
-                start_rank = (
-                    i * tensor_and_data_group_size_with_cp
-                    + j * tensor_model_parallel_size
-                    + k * tensor_model_parallel_size * context_parallel_size
-                    + offset
-                )
-                end_rank = start_rank + tensor_model_parallel_size
-                ranks = ranks + list(range(start_rank, end_rank))
-            group = torch.distributed.new_group(ranks)
+            for k in range(max(data_parallel_size, xdata_parallel_size)):
+                if k < real_data_parallel_size and i < num_tensor_and_data_groups_with_cp:
+                    start_rank = (
+                        i * tensor_and_data_group_size_with_cp
+                        + j * real_tensor_model_parallel_size
+                        + k * real_tensor_model_parallel_size * context_parallel_size
+                        + offset
+                    )
+                    end_rank = start_rank + real_tensor_model_parallel_size
+                    ranks = ranks + list(range(start_rank, end_rank))
             print_rank_0(f"Tensor + data parallel group: {ranks}")
+            group = torch.distributed.new_group(ranks)    
             if rank in ranks:
                 _TENSOR_AND_DATA_PARALLEL_GROUP = group
     # Copy for an extra transformer
@@ -476,24 +530,30 @@ def initialize_model_parallel(
     assert (
         _DATA_MODULO_EXPERT_PARALLEL_GROUP is None
     ), 'Data modulo expert group is already initialized'
-    tensor_and_data_group_size: int = tensor_model_parallel_size * data_parallel_size
+    tensor_and_data_group_size: int = real_tensor_model_parallel_size * real_data_parallel_size
     num_tensor_and_data_groups: int = world_size // tensor_and_data_group_size
-    tensor_and_expert_group_size: int = tensor_model_parallel_size * expert_model_parallel_size
-    num_expert_groups: int = data_parallel_size // expert_model_parallel_size
-    for i in range(num_tensor_and_data_groups):
-        for j in range(num_expert_groups):
-            start_rank = i * tensor_and_data_group_size + j * tensor_and_expert_group_size + offset
-            end_rank = i * tensor_and_data_group_size + (j + 1) * tensor_and_expert_group_size + offset
-            ranks = range(start_rank, end_rank)
+    tensor_and_expert_group_size: int = real_tensor_model_parallel_size * expert_model_parallel_size
+    num_expert_groups: int = real_data_parallel_size // expert_model_parallel_size
+    for i in range(max(ori_world_size // (tensor_model_parallel_size * data_parallel_size),
+                       extra_world_size // (xtensor_model_parallel_size * xdata_parallel_size))):
+        for j in range(max(data_parallel_size // expert_model_parallel_size, xdata_parallel_size // expert_model_parallel_size)):
+            if i < num_tensor_and_data_groups and j < num_expert_groups:
+                start_rank = i * tensor_and_data_group_size + j * tensor_and_expert_group_size + offset
+                end_rank = i * tensor_and_data_group_size + (j + 1) * tensor_and_expert_group_size + offset
+                ranks = range(start_rank, end_rank)
+            print_rank_0(f"Tensor + expert parallel group: {ranks}")
             group = torch.distributed.new_group(ranks)
             if rank in ranks:
                 _TENSOR_AND_EXPERT_PARALLEL_GROUP = group
 
-    for i in range(num_tensor_and_data_groups):
-        start_rank = i * tensor_and_data_group_size + offset
-        end_rank = (i + 1) * tensor_and_data_group_size + offset
-        for j in range(tensor_and_expert_group_size):
-            ranks = range(start_rank + j, end_rank, tensor_and_expert_group_size)
+    for i in range(max(ori_world_size // (tensor_model_parallel_size * data_parallel_size),
+                       extra_world_size // (xtensor_model_parallel_size * xdata_parallel_size))):
+        if i < num_tensor_and_data_groups:
+            start_rank = i * tensor_and_data_group_size + offset
+            end_rank = (i + 1) * tensor_and_data_group_size + offset
+        for j in range(max(data_parallel_size // expert_model_parallel_size, xdata_parallel_size // expert_model_parallel_size)):
+            if i < num_tensor_and_data_groups and j < num_expert_groups:
+                ranks = range(start_rank + j, end_rank, tensor_and_expert_group_size)
             print_rank_0(f"Data modulo expert parallel group: {ranks}")
             group = torch.distributed.new_group(ranks)
             if rank in ranks:
@@ -531,6 +591,7 @@ def is_extra_branch_rank():
     """Check if it is an extra branch"""
     assert _IS_EXTRA_BRANCH is not None, 'IS EXTRA BRANCH is not initialized'
     return _IS_EXTRA_BRANCH
+
 def has_extra_branch():
     """Check if it has extra branch"""
     assert _HAVE_EXTRA_BRANCH is not None, 'HAVE EXTRA BRANCH  is not initialized'
