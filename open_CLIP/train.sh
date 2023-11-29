@@ -17,14 +17,14 @@ cd /home/chen-yy20/Megatron-LM/open_clip
 export PYTHONPATH="$PYTHONPATH:$PWD/src"
 
 exec python -u src/training/main.py \
-    --deepspeed_config=ds_configs/ds_config.json \
-    --save-frequency 1 \
     --train-data="/mnt/zoltan/zanzong/CC3M/cc3m/{00000..00331}.tar" \
-    --train-num-samples 3000000 \
+    --train-num-samples 512 \
     --batch-size 16 \
     --epochs=1 \
     --model ViT-H-16 \
     --name "ViT-H-16-"$TIMESTAMP \
     --seed 0 \
     --force-patch-dropout 0. \
-    --gather-with-grad
+    --gather-with-grad \
+    # --deepspeed_config=ds_configs/ds_config.json \
+    # --save-frequency 1 \

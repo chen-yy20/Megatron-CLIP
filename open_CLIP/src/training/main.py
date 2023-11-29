@@ -28,7 +28,7 @@ except ImportError:
     hvd = None
 
 # from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
-from ..open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
+from open_clip import create_model_and_transforms, trace_model, get_tokenizer, create_loss
 from training.data import get_data
 from training.distributed import is_master, init_distributed_device, broadcast_object
 from training.logger import setup_logging
@@ -405,7 +405,7 @@ def main(args):
     if 'train' not in data:
         evaluate(model, data, start_epoch, args, writer)
         return
-
+    print_rank_0("Start to create loss function")
     loss = create_loss(args)
 
     def count_parameters(model, count_frozen=False):
@@ -448,8 +448,6 @@ def main(args):
             train_one_epoch_deepspeed(engine, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
         elif args.enable_flexpipe:
             train_one_epoch_deepspeed_pipeline(engine, data, epoch, args)
-        elif args.enable_megatron:
-            train_one_epoch_megatron(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
         else:
             train_one_epoch(model, data, loss, epoch, optimizer, scaler, scheduler, dist_model, args, tb_writer=writer)
         completed_epoch = epoch + 1

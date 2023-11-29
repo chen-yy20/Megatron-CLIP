@@ -9,6 +9,7 @@ try:
     has_distributed = True
 except ImportError:
     has_distributed = False
+from open_clip.tprofiler import print_rank_0
 
 try:
     import horovod.torch as hvd
@@ -75,6 +76,7 @@ class ClipLoss(nn.Module):
             use_horovod=False,
     ):
         super().__init__()
+        print_rank_0(f"ClipLoss: local_loss={local_loss}, gather_with_grad={gather_with_grad}")
         self.local_loss = local_loss
         self.gather_with_grad = gather_with_grad
         self.cache_labels = cache_labels
@@ -103,8 +105,9 @@ class ClipLoss(nn.Module):
         if self.world_size > 1:
             all_image_features, all_text_features = gather_features(
                 image_features, text_features,
+                # all_image_features.shape=torch.Size([64, 1024]), all_text_features.shape=torch.Size([64, 1024])
                 self.local_loss, self.gather_with_grad, self.rank, self.world_size, self.use_horovod)
-
+            print_rank_0(f"ClipLoss.get_logits: all_image_features.shape={all_image_features.shape}, all_text_features.shape={all_text_features.shape}")
             if self.local_loss:
                 logits_per_image = logit_scale * image_features @ all_text_features.T
                 logits_per_text = logit_scale * text_features @ all_image_features.T
@@ -118,10 +121,16 @@ class ClipLoss(nn.Module):
         return logits_per_image, logits_per_text
 
     def forward(self, image_features, text_features, logit_scale, output_dict=False):
+        # 16* 4 = 64
+        # ClipLoss.forward: image_features.shape=torch.Size([16, 1024]), text_features.shape=torch.Size([16, 1024])
+        # print_rank_0(f"ClipLoss.forward: image_features.shape={image_features.shape}, text_features.shape={text_features.shape}")
         device = image_features.device
+        # logits_per_image.shape=torch.Size([64, 64]), logits_per_text.shape=torch.Size([64, 64])
         logits_per_image, logits_per_text = self.get_logits(image_features, text_features, logit_scale)
-
+        # print_rank_0(f"ClipLoss.forward: logits_per_image.shape={logits_per_image.shape}, logits_per_text.shape={logits_per_text.shape}")
+        # labels.shape=torch.Size([64]), labels=tensor([ 0,  1,  2,  3,  4,  5,  6,  ..., 57, 58, 59, 60, 61, 62, 63])
         labels = self.get_ground_truth(device, logits_per_image.shape[0])
+        # print_rank_0(f"ClipLoss.forward: labels.shape={labels.shape}, labels={labels}")
 
         total_loss = (
             F.cross_entropy(logits_per_image, labels) +
