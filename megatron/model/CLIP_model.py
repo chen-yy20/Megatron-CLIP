@@ -89,7 +89,7 @@ class CLIPVisionModel(MegatronModule):
 textConfig = TransformerConfig(tensor_model_parallel_size=1,
                                context_parallel_size=1,
                                pipeline_model_parallel_size=1,
-                               sequence_parallel=True,
+                               sequence_parallel=False,
                                expert_model_parallel_size=1,
                                perform_initialization=True,
                                use_cpu_initialization=False,

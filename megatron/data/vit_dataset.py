@@ -49,9 +49,10 @@ class Solarization(object):
 
 class ClassificationTransform():
     def __init__(self, image_size, train=True):
-        args = get_args()
-        assert args.fp16 or args.bf16
-        self.data_type = torch.half if args.fp16 else torch.bfloat16
+        # args = get_args()
+        # assert args.fp16 or args.bf16
+        # self.data_type = torch.half if args.fp16 else torch.bfloat16
+        self.data_type = torch.half
         if train:
             self.transform = T.Compose([
                 T.RandomResizedCrop(image_size),
