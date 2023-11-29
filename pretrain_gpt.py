@@ -24,6 +24,7 @@ from megatron.arguments import core_transformer_config_from_args
 #     gpt_layer_with_transformer_engine_spec,
 #     gpt_layer_with_transformer_engine_spec_moe
 # )
+from torch.profiler import profile, record_function, ProfilerActivity
 
 def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megatron.model.GPTModel]:
     """Builds the model.
@@ -95,8 +96,9 @@ def get_batch(data_iterator):
 
     # Unpack.
     tokens_ = data_b['text'].long()
-    labels = tokens_[:, 1:].contiguous()
-    tokens = tokens_[:, :-1].contiguous()
+    # next token prediction
+    labels = tokens_[:, 1:].contiguous()  # 第二个token到最后一个token
+    tokens = tokens_[:, :-1].contiguous() # 第一个token到倒数第二个token
 
     # Get the masks and postition ids.
     attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
@@ -133,7 +135,6 @@ def loss_func(loss_mask: Tensor, output_tensor: Tensor):
 
     return loss, {'lm loss': averaged_loss[0]}
 
-
 def forward_step(data_iterator, model: GPTModel):
     """Forward training step.
 
@@ -149,9 +150,14 @@ def forward_step(data_iterator, model: GPTModel):
     tokens, labels, loss_mask, attention_mask, position_ids = get_batch(
         data_iterator)
     timers('batch-generator').stop()
-
+    
+    # Forward model.    
+    timers('forward').start()
     output_tensor = model(tokens, position_ids, attention_mask,
-                          labels=labels)
+                        labels=labels)
+    timers('forward').stop()
+    output_tensor = model(tokens, position_ids, attention_mask,
+                        labels=labels)
 
     return output_tensor, partial(loss_func, loss_mask)
 
@@ -183,9 +189,11 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
 
 
 if __name__ == "__main__":
-
+    # with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True, profile_memory=True) as prof:
     pretrain(train_valid_test_datasets_provider,
-             model_provider,
-             ModelType.encoder_or_decoder,
-             forward_step,
-             args_defaults={'tokenizer_type': 'GPT2BPETokenizer'})
+            model_provider,
+            ModelType.encoder_or_decoder,
+            forward_step,
+            args_defaults={'tokenizer_type': 'GPT2BPETokenizer'})
+        
+    # prof.export_chrome_trace("trace.json")

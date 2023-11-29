@@ -154,6 +154,7 @@ def _set_tensorboard_writer(args):
             print('> setting tensorboard ...')
             _GLOBAL_TENSORBOARD_WRITER = SummaryWriter(
                 log_dir=args.tensorboard_dir,
+                # log_dir='./tensorboard/',
                 max_queue=args.tensorboard_queue_size)
         except ModuleNotFoundError:
             print('WARNING: TensorBoard writing requested but is not '

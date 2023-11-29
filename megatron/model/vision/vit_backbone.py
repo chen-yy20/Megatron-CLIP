@@ -248,7 +248,7 @@ class VitBackbone(MegatronModule):
 
         return hidden_states
 
-class AttentionalPooler(nn.Module):
+class AttentionalPooler(torch.nn.Module):
     def __init__(
             self,
             d_model: int,

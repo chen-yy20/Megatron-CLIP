@@ -1,4 +1,5 @@
 from megatron.core.parallel_state import initialize_model_parallel
+from megatron.initialize import initialize_megatron
 import torch
 import torch.distributed
 import os
@@ -26,3 +27,7 @@ initialize_model_parallel(
     xpipeline_model_parallel_size=2,
     is_multi_branch=True
 )
+
+# step 1 : initialize megatron
+# initialize_megatron()
+

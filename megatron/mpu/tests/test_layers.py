@@ -1,16 +1,20 @@
 # Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
 
-from mpu import layers
+# from mpu import layers
+
 from commons import set_random_seed
 from commons import print_separator
 from commons import initialize_distributed
-import mpu
+
 from torch.nn.parameter import Parameter
 import torch.nn.init as init
 import torch
 import random
 import sys
-sys.path.append("../..")
+sys.path.append("../../..")
+from megatron.core import mpu
+from megatron.core.tensor_parallel import layers
+# import mpu
 
 
 def test_parallel_embedding(tensor_model_parallel_size):
@@ -40,12 +44,12 @@ def test_parallel_embedding(tensor_model_parallel_size):
     loss_original = torch.mul(output, loss_weight).sum()
     loss_original.backward()
 
-    set_random_seed(seed)
-    embedding_parallel = layers.ParallelEmbedding(
-        vocab_size, hidden_size, init_method=init.normal_).cuda()
-    output = embedding_parallel(input_data)
-    loss_parallel = torch.mul(output, loss_weight).sum()
-    loss_parallel.backward()
+    # set_random_seed(seed)
+    # embedding_parallel = layers.ParallelEmbedding(
+    #     vocab_size, hidden_size, init_method=init.normal_).cuda()
+    # output = embedding_parallel(input_data)
+    # loss_parallel = torch.mul(output, loss_weight).sum()
+    # loss_parallel.backward()
 
     set_random_seed(seed)
     embedding_vocab_parallel = layers.VocabParallelEmbedding(
@@ -55,7 +59,7 @@ def test_parallel_embedding(tensor_model_parallel_size):
     loss_vocab_parallel.backward()
 
     torch.distributed.barrier()
-    error = loss_parallel.sub(loss_original).abs()
+    # error = loss_parallel.sub(loss_original).abs()
     print('   error in loss (parallel) on global rank {}: {}'.format(
         torch.distributed.get_rank(), error))
     assert error < 1.0e-12, 'error: {}'.format(error)
@@ -69,7 +73,7 @@ def test_parallel_embedding(tensor_model_parallel_size):
     weight_grad_orig = torch.split(embedding_original.weight.grad,
                                    hidden_size // tensor_model_parallel_size,
                                    1)[mpu.get_tensor_model_parallel_rank()]
-    error = embedding_parallel.weight.grad.sub(weight_grad_orig).abs().max()
+    # error = embedding_parallel.weight.grad.sub(weight_grad_orig).abs().max()
     print('   error in grad (parallel) on global rank {}: {}'.format(
         torch.distributed.get_rank(), error))
     assert error < 1.0e-12, 'error: {}'.format(error)

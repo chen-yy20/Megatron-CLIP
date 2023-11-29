@@ -3,28 +3,35 @@
 
 import os
 import torch
-from torch import Tensor
-from functools import partial
-from typing import Union
+# from torch import Tensor
+# from functools import partial
+# from typing import Union
 from megatron import get_args
 from megatron import print_rank_0
-from megatron import get_timers
-from megatron import get_tokenizer
+# from megatron import get_timers
+# # from megatron import get_tokenizer
 from megatron.core import tensor_parallel
-from megatron.core.enums import ModelType
-from megatron.data.gpt_dataset import GPTDataset, build_train_valid_test_datasets
-import megatron.model
-from megatron.core.models.gpt import GPTModel
-from megatron.training import pretrain
-from megatron.core.transformer.spec_utils import import_module
+# from megatron.core.enums import ModelType
+# from megatron.data.gpt_dataset import GPTDataset, build_train_valid_test_datasets
+# import megatron.model
+from megatron.core.parallel_state import is_extra_branch_rank
+# from megatron.training import pretrain
+# from megatron.core.transformer.spec_utils import import_module
 from megatron.utils import get_ltor_masks_and_position_ids
-from megatron.utils import average_losses_across_data_parallel_group
-from megatron.arguments import core_transformer_config_from_args, vision_transformer_config_from_args
-# from megatron.core.models.gpt.gpt_layer_specs import (
-#     gpt_layer_with_transformer_engine_spec,
-#     gpt_layer_with_transformer_engine_spec_moe
-# )
-from megatron.model import CLIP_model
+# from megatron.utils import average_losses_across_data_parallel_group
+# from megatron.arguments import core_transformer_config_from_args, \
+#                             clip_vision_transformer_config_from_args, clip_text_transformer_config_from_args
+# # from megatron.core.models.gpt.gpt_layer_specs import (
+# #     gpt_layer_with_transformer_engine_spec,
+# #     gpt_layer_with_transformer_engine_spec_moe
+# # )
+# from megatron.model import CLIP_model
+
+# load dataset
+import argparse
+from open_CLIP.src.open_clip.factory import get_tokenizer
+from open_CLIP.src.training.data import get_wds_dataset
+
 
 
 
@@ -33,17 +40,29 @@ def model_provider(pre_process=True, post_process=True) -> CLIP_model.CLIPModel:
     """Builds the model. """
     args = get_args()
 
-    print_rank_0('building GPT model ...')
-    text_config = core_transformer_config_from_args(get_args())
-    vision_config = vision_transformer_config_from_args(args)
+    print_rank_0('building CLIP model ...')
+    text_config = clip_text_transformer_config_from_args(args)
+    vision_config = clip_vision_transformer_config_from_args(args)
     embed_dim = 512
 
-    model = CLIP_model.CLIPModel(
-        embed_dim=embed_dim,
-        vision_cfg=vision_config,
-        text_cfg=text_config,
-        output_dict=True,
-    )
+    # 目前先作为两个完全独立的模型来训练
+    if not is_extra_branch_rank():
+        model = CLIP_model.CLIPVisionModel(
+            config=vision_config,
+            args=args,
+            pre_process=pre_process,
+            post_process=post_process,
+            image_projection=True,
+        )
+    else:
+        model = CLIP_model.CLIPTextModel(
+            config = text_config,
+            pre_process = pre_process,
+            post_process = post_process,
+            add_pooler = True,
+            return_embeddings = True,
+            text_projection = True,
+        )
 
     return model
 
@@ -51,33 +70,66 @@ def model_provider(pre_process=True, post_process=True) -> CLIP_model.CLIPModel:
 def get_batch(data_iterator):
     """Generate a batch."""
     args = get_args()
-    tokenizer = get_tokenizer()
+    parser = argparse.ArgumentParser(description='Generate CLIP dataset batch')
+
+    dataset_args = parser.parse_args()
+    dataset_args.train_data = "/mnt/zoltan/zanzong/CC3M/cc3m/{00000..00331}.tar"
+    dataset_args.train_num_samples = 1000000
+    dataset_args.train_data_upsampling_factors = None
+    dataset_args.seed = 1234
+    dataset_args.batch_size = 16 # img: 16  text: torch.Size([16, 77])
+    dataset_args.workers = 1
+    dataset_args.world_size = 1
+    dataset_args.model = 'RN50'
+
+    def preprocess_img(img):
+        return img 
+    
+    data = {}
+    data['train'] = get_wds_dataset(dataset_args, preprocess_img, True, tokenizer=get_tokenizer(args.model))
+    print(data)
+    data['train'].set_epoch(0)
+    dataloader = data['train'].dataloader
+    data_iterator = iter(dataloader)
+    # args = get_args()
+    # tokenizer = get_tokenizer()
 
     # Items and their type.
-    keys = ['text']
     datatype = torch.int64
 
     # Broadcast data.
+    # FIXME: 此处的rank0可能有问题
     if data_iterator is not None:
         data = next(data_iterator)
+        if is_extra_branch_rank():
+            keys = ['text']
+            data = data[1]
+        else:
+            keys = ['image']
+            data = data[0]
     else:
         data = None
     data_b = tensor_parallel.broadcast_data(keys, data, datatype)
 
     # Unpack.
-    tokens_ = data_b['text'].long()
-    labels = tokens_[:, 1:].contiguous()
-    tokens = tokens_[:, :-1].contiguous()
+    if is_extra_branch_rank():
+        tokens = data_b['text'].long().contiguous()
+    else:
+        tokens = data_b['image'].long().contiguous()
 
-    # Get the masks and postition ids.
-    attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
-        tokens,
-        tokenizer.eod,
-        args.reset_position_ids,
-        args.reset_attention_mask,
-        args.eod_mask_loss)
+    # # Get the masks and postition ids.
+    if is_extra_branch_rank():
+        eod_token = 49407 # begin: 49406 end: 49407 
+        attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
+            tokens,
+            eod_token,
+            args.reset_position_ids,
+            args.reset_attention_mask,
+            args.eod_mask_loss)
 
-    return tokens, labels, loss_mask, attention_mask, position_ids
+        return tokens, loss_mask, attention_mask, position_ids
+    else:
+        return tokens, None, None, None
 
 def loss_func(loss_mask: Tensor, output_tensor: Tensor):
     """Loss function.
@@ -105,7 +157,7 @@ def loss_func(loss_mask: Tensor, output_tensor: Tensor):
     return loss, {'lm loss': averaged_loss[0]}
 
 
-def forward_step(data_iterator, model: GPTModel):
+def forward_step(data_iterator, model):
     """Forward training step.
 
     Args:
@@ -155,8 +207,9 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
 
 if __name__ == "__main__":
 
-    pretrain(train_valid_test_datasets_provider,
-             model_provider,
-             ModelType.encoder_or_decoder,
-             forward_step,
-             args_defaults={'tokenizer_type': 'GPT2BPETokenizer'})
+    # pretrain(train_valid_test_datasets_provider,
+    #          model_provider,
+    #          ModelType.encoder_or_decoder,
+    #          forward_step,
+    #          args_defaults={'tokenizer_type': 'GPT2BPETokenizer'})
+    get_batch(None)

@@ -58,6 +58,7 @@ exec python \
         --init-method-std 0.002 \
         --fp16 \
         --tensorboard-profile \
+        --profile-ranks 2
         # --tensorboard-dir ./tensorboard \
         # --log-memory-to-tensorboard \
         # --log-timers-to-tensorboard

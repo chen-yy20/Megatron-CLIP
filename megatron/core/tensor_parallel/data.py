@@ -83,11 +83,23 @@ def broadcast_data(keys, data, datatype):
         # Check that all keys have the same data type.
         _check_data_types(keys, data, datatype)
         # Flatten the data associated with the keys
+        """
+        对于给定的keys列表，它通过列表解析创建一个张量列表，其中每个张量都是data字典中相应键对应的值。
+        .contiguous()的作用是确保张量在内存中是连续存储的，因为在一些情况下，张量可能不是连续存储的
+        （例如，通过切片或其他操作导致不连续的存储）。
+        接着，通过.view(-1)将每个张量展平成一个一维张量。
+        最后，通过torch.cat函数按指定的维度（dim=0表示沿着行的方向）将这些一维张量连接成一个大的一维张量。   
+        最终，.cuda()将这个大张量移动到GPU上。
+        """
         flatten_data = torch.cat([data[key].contiguous().view(-1) for key in keys], dim=0).cuda()
     else:
+        """
+        对于非rank 0的情况，直接创建一个空的张量flatten_data，并设置其大小为total_numel，即所有元素的总数，
+        设备为当前GPU设备，数据类型为datatype。
+        """
         flatten_data = torch.empty(total_numel, device=torch.cuda.current_device(), dtype=datatype)
 
-    # Broadcast
+    # Broadcast, 在此处通过get_tensor_model_parallel_src_rank指定了广播的源rank
     torch.distributed.broadcast(
         flatten_data, get_tensor_model_parallel_src_rank(), group=get_tensor_model_parallel_group()
     )

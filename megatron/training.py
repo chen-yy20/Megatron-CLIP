@@ -225,7 +225,7 @@ def get_model(model_provider_func, model_type=ModelType.encoder_or_decoder, wrap
 
     # Build model.
     if mpu.get_pipeline_model_parallel_world_size() > 1 and \
-       args.virtual_pipeline_model_parallel_size is not None:
+       args.virtual_pipeline_model_parallel_size is not None: # for interleaved pipeline
         assert model_type != ModelType.encoder_and_decoder, \
             "Interleaved schedule not supported for model with both encoder and decoder"
         model = []
@@ -240,7 +240,7 @@ def get_model(model_provider_func, model_type=ModelType.encoder_or_decoder, wrap
             )
             this_model.model_type = model_type
             model.append(this_model)
-    else:
+    else: # for non-interleaved pipeline
         pre_process = mpu.is_pipeline_first_stage()
         post_process = mpu.is_pipeline_last_stage()
         add_encoder = True
@@ -744,9 +744,12 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
     # TODO: the profiler is here
     if  args.tensorboard_profile and torch.distributed.get_rank() in args.profile_ranks:
         profiler_context = profile(
+            # schedule=torch.profiler.schedule(
+
+            # )
                     activities=[ProfilerActivity.CPU, 
                                 ProfilerActivity.CUDA],
-                    on_trace_ready= tensorboard_trace_handler('./zTrace2'),
+                    on_trace_ready= tensorboard_trace_handler('./zTrace_virtual_2'),
                     with_stack=True, 
                     profile_memory=True)
     else:

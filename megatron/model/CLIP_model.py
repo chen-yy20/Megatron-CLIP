@@ -252,49 +252,35 @@ class CLIPTextModel(MegatronModule):
             self.word_embeddings.load_state_dict(
                 state_dict[self._word_embeddings_for_head_key], strict=strict)
 
-def _build_vision_tower(
-        embed_dim: int,
-        vision_cfg: TransformerConfig,
-):
-    # norm_layer要如何确定？
-    visual = CLIPVisionModel(
-        config=vision_cfg,
-        args=get_args(),
-        pre_process=True,
-        post_process=True,
-        image_projection= True,
-    )
-
-    return visual
-
-def _build_text_tower(
-        text_cfg: TransformerConfig
-):
-    text = CLIPTextModel(
-        config = text_cfg,
-        pre_process=True,
-        post_process=True,
-        add_pooler=False,
-        return_embeddings=False, # 暂时还不知道这个参数的必要性
-        text_projection=True,
-    )
-
-    return text
 
 class CLIPModel(MegatronModule):
     output_dict: torch.jit.Final[bool]
 
     def __init__(
             self,
-            embed_dim: int,
             vision_cfg: TransformerConfig,
             text_cfg: TransformerConfig,
             output_dict: bool = False,
     ):
         super().__init__()
         self.output_dict = output_dict
-        self.visual = _build_vision_tower(embed_dim, vision_cfg)
-        self.text = _build_text_tower(embed_dim, text_cfg)
+
+        self.visual = CLIPVisionModel(
+                        config=vision_cfg,
+                        args=get_args(),
+                        pre_process=True,
+                        post_process=True,
+                        image_projection= True,
+                    )
+
+        self.text = CLIPTextModel(
+                        config = text_cfg,
+                        pre_process=True,
+                        post_process=True,
+                        add_pooler=False,
+                        return_embeddings=False, # 暂时还不知道这个参数的必要性
+                        text_projection=True,
+                    )
         self.token_embedding = self.text.embedding # FIXME:
         self.transformer = self.text.decoder
         self.vocab_size = self.text.vocab_size

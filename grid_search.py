@@ -103,7 +103,7 @@ def analysis_single(file_name, experiment_name):
 
 model_name = "GPT-1.3B"
 experiment_name = "throughput_test"
-node_name = "nico1"
+node_name = "nico2"
 
 if __name__ == "__main__":
     # run_grid_search()
@@ -121,11 +121,23 @@ if __name__ == "__main__":
     # run_single(1, 4, 2, 768, 6, "full", "uniform", 1)
     # run_single(1, 4, 2, 768, 6, "full", "uniform", 2)
     # run_single(1, 4, 2, 768, 6, "full", "block", 4)
-    run_single(1, 4, 2, 768, 6, "full", "block", 8)
-    # run_single(1, 4, 2, 128, 2, "full", "uniform", 1)
-    # run_single(1, 4, 2, 128, 4, "full", "uniform", 12)
-    # run_single(1, 4, 2, 128, 8, "full", "uniform", 1)
-    # run_single(2, 2, 2, 64, 1)
-    # run_single(2, 1, 4, 64, 16)
-    # run_single(2, 1, 4, 64, 32)
-    # run_single(1, 4, 2, 128, 1)
+    # run_single(1, 4, 2, 512, 4, "none")
+    run_single(2, 1, 4, 512, 4, "selective")
+    # run_single(1, 4, 2, 640, 4, "selective")
+    # run_single(1, 4, 2, 768, 4, "selective")
+    # run_single(1, 4, 2, 896, 4, "selective")
+    # run_single(1, 4, 2, 1024, 4, "selective")
+    # run_single(1, 4, 2, 1152, 4, "selective")
+    # run_single(1, 4, 2, 1280, 4, "selective")
+    # run_single(1, 4, 2, 1408, 4, "selective")
+    # run_single(1, 4, 2, 1536, 4, "selective")
+    # run_single(1, 4, 2, 1664, 4, "selective")
+    # run_single(1, 4, 2, 1792, 4, "selective")
+    # run_single(1, 4, 2, 1920, 4, "selective")
+    # run_single(1, 4, 2, 2048, 4, "selective")
+
+    # run_single(1, 4, 2, 512, 4, "full", "uniform", 1)
+    # run_single(1, 4, 2, 512, 4, "full", "uniform", 2)
+    # run_single(1, 4, 2, 512, 4, "full", "uniform", 3)
+    # run_single(1, 4, 2, 512, 4, "full", "uniform", 4)
+

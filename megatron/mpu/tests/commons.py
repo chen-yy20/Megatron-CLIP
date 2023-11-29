@@ -5,8 +5,10 @@ import os
 import random
 import numpy
 import torch
-
-import mpu
+import sys
+sys.path.append("../../..")
+from megatron.core import mpu
+# import mpu
 
 
 class IdentityLayer(torch.nn.Module):
