@@ -4,21 +4,22 @@
 import os
 import torch
 from torch import Tensor
-# from functools import partial
+import torch.nn.functional as F
+from functools import partial
 # from typing import Union
 from megatron import get_args
 from megatron import print_rank_0
 from megatron import get_timers
 # # from megatron import get_tokenizer
 from megatron.core import tensor_parallel
-# from megatron.core.enums import ModelType
+from megatron.core.enums import ModelType
 # from megatron.data.gpt_dataset import GPTDataset, build_train_valid_test_datasets
 # import megatron.model
 from megatron.core.parallel_state import is_extra_branch_rank
-# from megatron.training import pretrain
+from megatron.training import pretrain
 # from megatron.core.transformer.spec_utils import import_module
 from megatron.utils import get_ltor_masks_and_position_ids
-# from megatron.utils import average_losses_across_data_parallel_group
+from megatron.utils import average_losses_across_data_parallel_group
 from megatron.arguments import core_transformer_config_from_args, \
                             clip_vision_transformer_config_from_args, clip_text_transformer_config_from_args
 # # from megatron.core.models.gpt.gpt_layer_specs import (
@@ -35,28 +36,6 @@ from megatron.data.vit_dataset import ClassificationTransform
 
 
 # Get data
-parser = argparse.ArgumentParser(description='Generate CLIP dataset batch')
-
-dataset_args = parser.parse_args()
-dataset_args.train_data = "/mnt/zoltan/zanzong/CC3M/cc3m/{00000..00331}.tar"
-dataset_args.train_num_samples = 1000000
-dataset_args.train_data_upsampling_factors = None
-dataset_args.seed = 1234
-dataset_args.batch_size = 16 # img: 16  text: torch.Size([16, 77])
-dataset_args.workers = 1
-dataset_args.world_size = 1
-dataset_args.model = 'RN50'
-
-img_transform = ClassificationTransform((256, 256))
-
-data = {}
-data['train'] = get_wds_dataset(dataset_args, img_transform, True, tokenizer=get_tokenizer(dataset_args.model))
-print(data)
-data['train'].set_epoch(0)
-dataloader = data['train'].dataloader
-data_iterator = iter(dataloader)
-
-# ========================================================
 
 def model_provider(pre_process=True, post_process=True) -> CLIP_model.CLIPModel:
     """Builds the model. """
@@ -82,7 +61,7 @@ def model_provider(pre_process=True, post_process=True) -> CLIP_model.CLIPModel:
             pre_process = pre_process,
             post_process = post_process,
             add_pooler = True,
-            return_embeddings = True,
+            return_embeddings = False,
             text_projection = True,
         )
 
@@ -140,25 +119,22 @@ def loss_func(text_output: Tensor, image_output: Tensor):
         loss_mask (Tensor): Used to mask out some portions of the loss
         output_tensor (Tensor): The tensor with the losses
     """    
-    text_logits = text_output.contiguous().float()
-    image_logits = image_output.contiguous().float()
-#     losses = output_tensor.float()
-#     loss_mask = loss_mask.view(-1).float()
-#     loss = torch.sum(losses.view(-1) * loss_mask) / loss_mask.sum()
+    text_features = text_output.contiguous().float()
+    image_features = image_output.contiguous().float()
 
-#     # Check individual rank losses are not NaN prior to DP all-reduce.
-#     args = get_args()
-#     if args.check_for_nan_in_loss_and_grad:
-#         global_rank = torch.distributed.get_rank()
-#         assert not loss.isnan(), (
-#             f'Rank {global_rank}: found NaN in local forward loss calculation. '
-#             f'Device: {torch.cuda.current_device()}, node: {os.uname()[1]}'
-#         )
+    labels = torch.arange(text_output.shape[0], dtype=torch.long)
+    text_logits = text_features @ image_features.T
+    image_logits = image_features @ text_features.T
+    text_outputs = torch.argmax(text_logits, -1)
+    correct = (text_outputs == labels).float()
+    accuracy = torch.mean(correct)
+    total_loss = (
+            F.cross_entropy(text_logits, labels) +
+            F.cross_entropy(image_logits, labels)
+    ) / 2
+    averaged_loss = average_losses_across_data_parallel_group([total_loss, accuracy])
+    return total_loss, {"loss": averaged_loss[0], "accuracy": averaged_loss[1]}
 
-#     # Reduce loss for logging.
-#     averaged_loss = average_losses_across_data_parallel_group([loss])
-
-#     return loss, {'lm loss': averaged_loss[0]}
 
 
 def forward_step(data_iterator, model):
@@ -186,8 +162,18 @@ def forward_step(data_iterator, model):
         # Vit Backbone
         output_tensor = model(tokens)
 
-    return output_tensor
+    return output_tensor, loss_func
 
+class DatasetArguments:
+    def __init__(self):
+        self.train_data = "/mnt/zoltan/zanzong/CC3M/cc3m/{00000..00331}.tar"
+        self.train_num_samples = 10000
+        self.train_data_upsampling_factors = None
+        self.seed = 1234
+        self.batch_size = 16 # img: 16  text: torch.Size([16, 77])
+        self.workers = 1
+        self.world_size = 1
+        self.model = 'RN50'
 
 def train_valid_test_datasets_provider(train_val_test_num_samples):
     """Build the train test and validation datasets.
@@ -195,25 +181,21 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
     Args:
         train_val_test_num_samples : A list containing the number of samples in train test and validation.
     """
-    # args = get_args()
+    img_transform = ClassificationTransform((256, 256))
 
-    # print_rank_0('> building train, validation, and test datasets '
-    #              'for GPT ...')
-    # train_ds, valid_ds, test_ds = build_train_valid_test_datasets(
-    #     data_prefix=args.data_path,
-    #     splits_string=args.split,
-    #     train_valid_test_num_samples=train_val_test_num_samples,
-    #     seq_length=args.seq_length,
-    #     seed=args.seed,
-    #     skip_warmup=(not args.mmap_warmup),
-    #     train_data_prefix=args.train_data_path,
-    #     valid_data_prefix=args.valid_data_path,
-    #     test_data_prefix=args.test_data_path,
-    #     data_cache_path=args.data_cache_path)
-    # print_rank_0("> finished creating GPT datasets ...")
+    dataset_args = DatasetArguments()
+    data = {}
+    data['train'] = get_wds_dataset(dataset_args, img_transform, True, tokenizer=get_tokenizer(dataset_args.model))
+    train_ds = data['train']
+    
+    # data['train'].set_epoch(0)
+    # train_ds = data['train'].dataloader
 
-    # return train_ds, valid_ds, test_ds
+    print_rank_0('> building train, validation, and test datasets '
+                 'for CLIP ...')
+    print_rank_0("> finished creating CLIP datasets ...")
 
+    return train_ds, None, None
 
 if __name__ == "__main__":
 

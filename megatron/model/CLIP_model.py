@@ -14,6 +14,7 @@ from megatron.model.language_model import parallel_lm_logits, get_language_model
 from .module import MegatronModule
 from dataclasses import dataclass
 from typing import Optional, Tuple, Union, Literal, Callable
+from megatron.core.enums import ModelType
 
 # Vision Import
 from megatron.model.transformer import ParallelTransformer
@@ -51,15 +52,16 @@ class CLIPVisionModel(MegatronModule):
                  post_process=True,
                  image_projection = False,
                  ):
-        super(VitBackbone, self).__init__()  
+        super().__init__(config=config)
         args = get_args()
         self.output_tokens = args.v_output_tokens
         self.hidden_size = args.v_hidden_size
         self.pre_process = pre_process
         self.post_process = post_process
+        self.model_type = ModelType.encoder_or_decoder
         if image_projection:
             scale = args.v_hidden_size ** -0.5
-            self.image_projection = nn.Parameter(scale * torch.randn(config.hidden_size, args.clip_embedded_dim))
+            self.image_projection = nn.Parameter(scale * torch.randn(config.hidden_size, args.clip_embeded_dim))
         self.backbone = CLIP_VitBackbone(
             config=config,
             pre_process=self.pre_process,
@@ -129,7 +131,7 @@ class CLIPTextModel(MegatronModule):
         pre_process = True,
         post_process = True,
         add_pooler = False,
-        return_embeddings = True,
+        return_embeddings = False,
         text_projection = False,
     ):
         super().__init__(config=config)
@@ -138,14 +140,15 @@ class CLIPTextModel(MegatronModule):
         self.post_process = post_process
         self.add_pooler = add_pooler
         self.return_embeddings = return_embeddings
-        if self.return_embeddings:
-            assert self.post_process and self.add_pooler
+        if self.return_embeddings and self.post_process:
+            assert self.add_pooler
 
         
         # CLIP 当中的positional_embedding 是 nn.Parameter(torch.empty(self.num_pos, width)) , 我们这里暂且使用RotaryEmbedding
         # 注意设置 args.position_embedding_type == 'rope'
         self.language_model, self._language_model_key = get_language_model(
             config=config,
+            num_tokentypes=0, # num_tokentypes: size of the token-type embeddings. 0 value will ignore this embedding
             add_pooler=self.add_pooler,
             encoder_attn_mask_type= AttnMaskType.padding,
             pre_process=self.pre_process,
@@ -154,7 +157,7 @@ class CLIPTextModel(MegatronModule):
         self.initialize_word_embeddings()
 
         if self.post_process and text_projection:
-            self.text_projection = nn.Parameter(torch.empty(config.hidden_size, args.clip_embedded_dim))
+            self.text_projection = nn.Parameter(torch.empty(config.hidden_size, args.clip_embeded_dim))
        
 
     def set_input_tensor(self, input_tensor):

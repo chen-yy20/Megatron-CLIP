@@ -113,7 +113,6 @@ def pretrain(train_valid_test_dataset_provider,
 
     args = get_args()
     timers = get_timers()
-
     # Model, optimizer, and learning rate.
     timers('model-and-optimizer-setup', log_level=0).start(barrier=True)
     model, optimizer, opt_param_scheduler = setup_model_and_optimizer(
@@ -122,7 +121,7 @@ def pretrain(train_valid_test_dataset_provider,
     print_datetime('after model, optimizer, and learning rate '
                    'scheduler are built')
     config = get_model_config(model[0])
-
+    
     # Data stuff.
     timers('train/valid/test-data-iterators-setup', log_level=0).start(
         barrier=True)
@@ -147,16 +146,17 @@ def pretrain(train_valid_test_dataset_provider,
 
     # Print setup timing.
     print_rank_0('done with setup ...')
+    
     timers.log(['model-and-optimizer-setup',
                 'train/valid/test-data-iterators-setup'], barrier=True)
-
+    
     if not args.skip_train:
         print_rank_0('training ...')
-
         if args.dataloader_type == 'cyclic' and args.retro_add_retriever:
             args.train_iters = args.retro_cyclic_train_iters
             print_rank_0("retro cyclic train iters : %d" % args.train_iters)
-
+        # exit()
+        # TODO: 目前CLIP可以运行到这一步
         iteration = 0
         if args.do_train and args.train_iters > 0:
             iteration = train(forward_step_func,
@@ -267,11 +267,14 @@ def get_model(model_provider_func, model_type=ModelType.encoder_or_decoder, wrap
                 pre_process=pre_process,
                 post_process=post_process
             )
-        model.model_type = model_type
-
+        # print_rank_0(model)
+        if model is not None:
+            model.model_type = model_type
+        else:
+            raise RuntimeError("Model is failed to built.")
     if not isinstance(model, list):
         model = [model]
-
+  
     # Disallow training and inference with Transformer Engine
     # for non-GPT models
     args.allow_transformer_engine = all([type(m) == GPTModel for m in model])
@@ -288,8 +291,10 @@ def get_model(model_provider_func, model_type=ModelType.encoder_or_decoder, wrap
 
     # Print number of parameters.
     if mpu.get_data_parallel_rank() == 0:
-        print(' > number of parameters on (tensor, pipeline) '
+        rank = torch.distributed.get_rank()
+        print('rank {}:> number of parameters on (tensor, pipeline) '
               'model parallel rank ({}, {}): {}'.format(
+            rank,
             mpu.get_tensor_model_parallel_rank(),
             mpu.get_pipeline_model_parallel_rank(),
             sum([sum([p.nelement() for p in model_module.parameters()])
@@ -317,7 +322,6 @@ def get_model(model_provider_func, model_type=ModelType.encoder_or_decoder, wrap
         if args.data_parallel_random_init:
             for model_module in model:
                 model_module.broadcast_params()
-
     return model
 
 
@@ -380,6 +384,7 @@ def setup_model_and_optimizer(model_provider_func,
     args = get_args()
 
     model = get_model(model_provider_func, model_type)
+    print_rank_0("finished building model")
     unwrapped_model = unwrap_model(model)
 
     optimizer = get_megatron_optimizer(model, no_wd_decay_cond,
@@ -1035,12 +1040,15 @@ def build_train_valid_test_data_loaders(
     # Data loader only on rank 0 of each model parallel group.
     if mpu.get_tensor_model_parallel_rank() == 0:
 
-        # Build datasets.
+        # Build datasets. 这个就是纯粹调用了build_train_valid_test_datasets_provider，外加打印一些搞笑信息
         train_ds, valid_ds, test_ds = build_train_valid_test_datasets(
             build_train_valid_test_datasets_provider)
         # Build dataloders.
-        train_dataloader = build_pretraining_data_loader(
-            train_ds, args.consumed_train_samples)
+        if args.tokenizer_type == "CLIPTokenizer":
+            train_dataloader = train_ds.dataloader
+        else:
+            train_dataloader = build_pretraining_data_loader(
+                train_ds, args.consumed_train_samples)
         if args.skip_train:
             valid_dataloader = build_pretraining_data_loader(valid_ds, 0)
         else:

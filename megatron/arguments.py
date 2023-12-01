@@ -55,7 +55,7 @@ def parse_args(extra_args_provider=None, ignore_unknown_args=False):
     # Args from environment
     args.rank = int(os.getenv('RANK', '0'))
     # world size retrieved from torch.distributed environment
-    args.world_size = int(os.getenv("WORLD_SIZE", '1'))
+    args.world_size = int(os.getenv("WORLD_SIZE", '1')) - args.extra_world_size
 
     return args
 
@@ -75,6 +75,16 @@ def validate_args(args, defaults={}):
         if args.standalone_embedding_stage else
         args.pipeline_model_parallel_size
     )
+
+    if args.extra_world_size > 0:
+        args.xpipeline_model_parallel_size = min(
+            args.xpipeline_model_parallel_size,
+            (args.extra_world_size // args.xtensor_model_parallel_size))
+        args.transformer_xpipeline_model_parallel_size = (
+            args.xpipeline_model_parallel_size - 1
+            if args.standalone_embedding_stage else
+            args.xpipeline_model_parallel_size
+        )
     # Checks.
     model_parallel_size = args.pipeline_model_parallel_size * \
                           args.tensor_model_parallel_size
@@ -233,6 +243,15 @@ def validate_args(args, defaults={}):
         assert args.encoder_num_layers is not None, \
             'either num-layers or encoder-num-layers should be specified'
         args.num_layers = args.encoder_num_layers
+
+    if args.v_num_layers is not None:
+        assert args.v_encoder_num_layers is None, \
+            'cannot have both v-num-layers and v-encoder-num-layers specified'
+        args.v_encoder_num_layers = args.num_layers
+    else:
+        assert args.v_encoder_num_layers is not None, \
+            'either v-num-layers or v-encoder-num-layers should be specified'
+        args.v_num_layers = args.v_encoder_num_layers
 
     # Check required arguments.
     required_args = ['num_layers', 'hidden_size', 'num_attention_heads',
@@ -1092,6 +1111,8 @@ def _add_mixed_precision_args(parser):
 def _add_distributed_args(parser):
     group = parser.add_argument_group(title='distributed')
 
+    group.add_argument('--extra-world-size', type=int, default=0,
+                       help='Distributed world world size for extra branch. ')
     group.add_argument('--tensor-model-parallel-size', type=int, default=1,
                        help='Degree of tensor model parallelism.')
     group.add_argument('--xtensor-model-parallel-size', type=int, default=1,
@@ -1245,7 +1266,8 @@ def _add_data_args(parser):
                                 'SentencePieceTokenizer',
                                 'GPTSentencePieceTokenizer',
                                 'Llama2Tokenizer',
-                                'NullTokenizer'],
+                                'NullTokenizer',
+                                'CLIPTokenizer'],
                        help='What type of tokenizer to use.')
     group.add_argument('--tokenizer-model', type=str, default=None,
                        help='Sentencepiece tokenizer model.')
@@ -1335,6 +1357,8 @@ def _add_vision_args(parser):
     # CLIP Transformer arguments
     group.add_argument('--v-num-layers', type=int, default=12,
                        help='Number of layers in CLIP Transformer')
+    group.add_argument('--v-encoder-num-layers', type=int, default=None,
+                       help='Number of encoder layers in CLIP Transformer')
     group.add_argument('--v-hidden-size', type=int, default=768,
                           help='Hidden dimension size in CLIP Transformer')
     group.add_argument('--v-ffn-hidden_size', type=int, default=4*768,
@@ -1358,7 +1382,7 @@ def _add_vision_args(parser):
                             help='what fraction of patches to dropout during training (0 would mean disabled and no patches dropped) - 0.5 to 0.75 recommended in the paper for optimal results')
     group.add_argument('--v-input-patchnorm', action='store_false',
                             help='whether to use dual patchnorm - would only apply the input layernorm on each patch, as post-layernorm already exist in original clip vit design')
-    group.add_argument('--v-global-averagePool', action='store_false',
+    group.add_argument('--v-global-average-pool', action='store_false',
                        help='whether to global average pool the last embedding layer, instead of using CLS token (https://arxiv.org/abs/2205.01580)')
     group.add_argument('--v-attentional-pool', action='store_false',
                        help='whether to use attentional pooler in the last embedding layer')

@@ -195,7 +195,7 @@ def _initialize_distributed():
         # Call the init process
         torch.distributed.init_process_group(
             backend=args.distributed_backend,
-            world_size=args.world_size,
+            world_size=args.world_size + args.extra_world_size,
             rank=args.rank,
             timeout=timedelta(minutes=args.distributed_timeout_minutes),
         )
@@ -211,6 +211,9 @@ def _initialize_distributed():
                 args.pipeline_model_parallel_size,
                 args.virtual_pipeline_model_parallel_size, # virtual PP是nvidia对megatron后续迭代的进一步优化方法
                 args.pipeline_model_parallel_split_rank,
+                extra_world_size = args.extra_world_size,
+                xtensor_model_parallel_size = args.xtensor_model_parallel_size,
+                xpipeline_model_parallel_size = args.xpipeline_model_parallel_size,
                 expert_model_parallel_size=args.expert_model_parallel_size,
             )
             if args.rank == 0:

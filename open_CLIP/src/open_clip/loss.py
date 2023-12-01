@@ -9,7 +9,7 @@ try:
     has_distributed = True
 except ImportError:
     has_distributed = False
-from open_clip.tprofiler import print_rank_0
+from .tprofiler import print_rank_0
 
 try:
     import horovod.torch as hvd

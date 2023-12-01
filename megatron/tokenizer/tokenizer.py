@@ -8,6 +8,8 @@ from abc import abstractmethod
 from .bert_tokenization import FullTokenizer as FullBertTokenizer
 from .gpt2_tokenization import GPT2Tokenizer
 
+from open_CLIP.src.open_clip.factory import get_tokenizer
+
 def build_tokenizer(args):
     """Initialize tokenizer."""
     if args.rank == 0:
@@ -41,6 +43,8 @@ def build_tokenizer(args):
     elif args.tokenizer_type == 'NullTokenizer':
         assert args.vocab_size is not None
         tokenizer = _NullTokenizer(args.vocab_size)
+    elif args.tokenizer_type == 'CLIPTokenizer':
+        tokenizer = get_tokenizer('RN50')
     else:
         raise NotImplementedError('{} tokenizer is not '
                                   'implemented.'.format(args.tokenizer_type))
@@ -48,7 +52,9 @@ def build_tokenizer(args):
     # Add vocab size (if not already set from a checkpoint).
     if getattr(args, "padded_vocab_size", None) is None:
         args.padded_vocab_size = _vocab_size_with_padding(tokenizer.vocab_size,
-                                                          args)
+                                                          args) if args.tokenizer_type != 'CLIPTokenizer' else \
+                                                          _vocab_size_with_padding(49408, args)
+        
 
     return tokenizer
 

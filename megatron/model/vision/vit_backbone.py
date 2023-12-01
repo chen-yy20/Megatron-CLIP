@@ -8,7 +8,7 @@ import torch
 import apex
 import torch.nn.functional as F
 from megatron import get_args
-from megatron.model.transformer import ParallelTransformer, ParallelTransformerForCLIPVision
+from megatron.model.transformer import ParallelTransformer
 from megatron.model.utils import (
     get_linear_layer,
     init_method_normal,
@@ -282,7 +282,7 @@ class CLIP_VitBackbone(MegatronModule):
                  single_token_output=False,
                  post_layer_norm=True,
                  drop_path_rate=0.0):
-        super(VitBackbone, self).__init__(share_embeddings_and_output_weights=False)
+        super().__init__(config=config, share_embeddings_and_output_weights=False)
         args = get_args()
         self.config = config
 
@@ -298,11 +298,11 @@ class CLIP_VitBackbone(MegatronModule):
         self.img_w = args.img_w
         self.micro_batch_size = args.micro_batch_size
         self.single_token_output = single_token_output
-        self.output_tokens = args.v_outputTokens
+        self.output_tokens = args.v_output_tokens
         self.drop_path_rate = drop_path_rate
-        self.input_patchnorm = args.vInputPatchnorm
-        self.global_average_pool = args.vGlobalAveragePool
-        self.layer_norm = get_norm(config, is_extra=True)
+        self.input_patchnorm = args.v_input_patchnorm
+        self.global_average_pool = args.v_global_average_pool
+        self.layer_norm = get_norm(config)
 
         assert self.img_h % self.patch_dim == 0
         assert self.img_w % self.patch_dim == 0
@@ -347,7 +347,7 @@ class CLIP_VitBackbone(MegatronModule):
         
             
 
-        self.transformer = ParallelTransformerForCLIPVision(
+        self.transformer = ParallelTransformer(
             config,
             model_type=args.model_type,
             pre_process=self.pre_process,
@@ -357,8 +357,8 @@ class CLIP_VitBackbone(MegatronModule):
             drop_path_rate=self.drop_path_rate,
         )
         scale = self.hidden_size ** -0.5
-        if args.vAttentionalPool:
-            self.attn_pool = AttentionalPooler(self.hidden_size, self.hidden_size, n_head=args.vAttnPoolerHeads, n_queries=args.vNQueries)
+        if args.v_attentional_pool:
+            self.attn_pool = AttentionalPooler(self.hidden_size, self.hidden_size, n_head=args.v_attn_pooler_heads, n_queries=args.v_nqueries)
             # What is output dim
             self.ln_post = torch.nn.LayerNorm(self.hidden_size, eps=1e-5)
             self.proj = torch.nn.Parameter(scale * torch.randn(self.hidden_size, self.hidden_size))
