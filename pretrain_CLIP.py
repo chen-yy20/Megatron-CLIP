@@ -120,6 +120,23 @@ def get_batch(data_iterator):
     else:
         return tokens, None, None, None
 
+class GatherLayer(torch.autograd.Function):
+    """Gather tensors from all process, supporting backward propagation."""
+
+    @staticmethod
+    def forward(ctx, input):
+        ctx.save_for_backward(input)
+        output = [torch.zeros_like(input) for _ in range(torch.distributed.get_world_size())]
+        torch.distributed.all_gather(output, input)
+        return tuple(output)
+
+    @staticmethod
+    def backward(ctx, *grads):
+        (input,) = ctx.saved_tensors
+        grad_out = torch.zeros_like(input)
+        grad_out[:] = grads[torch.distributed.get_rank()]
+        return grad_out
+
 def loss_func(output):
     """Loss function.
 
@@ -130,9 +147,15 @@ def loss_func(output):
     args = get_args()
     # gather特征，剔除冗余
     world_size = torch.distributed.get_world_size()
-    combine_output = [torch.zeros(args.micro_batch_size, args.clip_embeded_dim, device=torch.cuda.current_device()) 
-                      for i in range(world_size)]
-    torch.distributed.all_gather(combine_output, output)
+
+    # QUESTION: 据说以下做法是可行的
+    # combine_output = [torch.zeros(args.micro_batch_size, args.clip_embeded_dim, device=torch.cuda.current_device()) 
+    #                   for i in range(world_size)]
+    # torch.distributed.all_gather(combine_output, output)
+    # combine_output[torch.distributed.get_rank()] = output
+    combine_output = GatherLayer.apply(output)
+    print_rank_all(f"combine_output: {combine_output[0].shape} {combine_output[0].requires_grad}")
+    
 
     image_world_size = world_size - args.extra_world_size
     image_tp_group_num = image_world_size // args.tensor_model_parallel_size
@@ -146,7 +169,7 @@ def loss_func(output):
     image_output = torch.cat(image_output, dim=0)
     text_output = torch.cat(text_output, dim=0)
 
-    print_rank_0(f"-LOSS-  image_output: {image_output.shape}  text_output: {text_output.shape}")
+    print_rank_0(f"-LOSS-  image_output: {image_output.requires_grad}  text_output: {text_output.requires_grad}")
     
     text_features = text_output.contiguous().float()
     image_features = image_output.contiguous().float()
@@ -193,9 +216,8 @@ def forward_step(data_iterator, model):
     else:
         # Vit Backbone
         output_tensor = model(tokens)
-    # print_rank_all(f"final-output: {output_tensor.shape}")
+    print_rank_all(f"final-output: {output_tensor.requires_grad}")
     # print_rank_all(f"final-output: {output_tensor[:1,:10]}")
-
     return output_tensor, loss_func
 
 
