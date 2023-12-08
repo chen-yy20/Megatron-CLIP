@@ -16,16 +16,16 @@ export MASTER_PORT=$(expr $RANDOM % 10000 + 10000)
 export EXP_NAME='MEGATRON-CLIP'
 export MODEL_NAME='CLIP'    
 
-export TENSOR_PARALLEL_SIZE='1'
-export PIPELINE_PARALLEL_SIZE='2'
-export DATA_PARALLEL_SIZE='4'
+# export TENSOR_PARALLEL_SIZE='2'
+# export PIPELINE_PARALLEL_SIZE='1'
+# export DATA_PARALLEL_SIZE='2'
 export GPUS_PER_NODE='8'
 # export NNODES=$(( $DATA_PARALLEL_SIZE * $TENSOR_PARALLEL_SIZE * $PIPELINE_PARALLEL_SIZE / $GPUS_PER_NODE))
-export NNODES='2'
-export NODELIST='nico[2,4]'
+export NNODES='1'
+export NODELIST='nico[4]'
 
-export GLOBAL_BATCH_SIZE='64'
-export MICRO_BATCH_SIZE='4'
+# export GLOBAL_BATCH_SIZE='64'
+# export MICRO_BATCH_SIZE='4'
 
 mkdir -p ./logs
 mkdir -p ./logs/${EXP_NAME}
@@ -43,7 +43,7 @@ NNODES=$(scontrol show hostnames ${NODELIST} | wc -l)
 
 srun \
     --exclusive=user \
-    -p Big \
+    -p V100 \
     -K \
 	-N $NNODES \
     -w $NODELIST \

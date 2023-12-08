@@ -9,9 +9,9 @@ export CUDA_DEVICE_MAX_CONNECTIONS=1 # for async gradient all reduce
 
 DATETIME=`date +'date_%y-%m-%d_time_%H-%M-%S'`
 
-source ~/mega_env/bin/activate
+source ~/workspace/mega-env/bin/activate
 # source /opt/spack/share/spack/setup-env.sh;spack load cuda@11.8.0;spack load gcc@10.2.0;spack load nccl@2.10.3
-cd /home/chen-yy20/Megatron-LM
+cd /home/zanzong/workspace/Megatron-CLIP
 
 
 # TRAIN_SAMPLES=$(( $GLOBAL_BATCH_SIZE * 50))
