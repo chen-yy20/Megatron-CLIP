@@ -654,7 +654,7 @@ def _add_network_size_args(parser):
     group.add_argument('--num-query-groups', type=int, default=1)
 
     # add for clip
-    group.add_argument('--clip-embeded-dim', type=int, default=512,
+    group.add_argument('--clip-embeded-dim', type=int, default=1024,
                        help='Output dimension of the CLIP model.')
 
     group.add_argument('--max-position-embeddings', type=int, default=None,

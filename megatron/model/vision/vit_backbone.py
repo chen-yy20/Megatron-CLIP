@@ -290,7 +290,8 @@ class CLIP_VitBackbone(MegatronModule):
 
         self.pre_process = pre_process
         self.post_process = post_process
-        self.class_token = args.v_output_tokens
+        # self.class_token = args.v_output_tokens # FIXME
+        self.class_token = True
         self.post_layer_norm = post_layer_norm
         self.hidden_size = args.v_hidden_size
         self.patch_dim = args.patch_dim
@@ -321,7 +322,7 @@ class CLIP_VitBackbone(MegatronModule):
                     torch.randn(1, CLASS_TOKEN_LENGTH, self.hidden_size)
                 )
                 torch.nn.init.zeros_(self.cls_token)
-            self.position_ids = torch.arange(self.seq_length).expand(1, -1).cuda()
+            self.position_ids = torch.arange(self.seq_length).expand(self.micro_batch_size, -1).cuda()
 
             # Linear encoder
             self.linear_encoder = torch.nn.Linear(
@@ -345,8 +346,6 @@ class CLIP_VitBackbone(MegatronModule):
 
             self.embedding_dropout = torch.nn.Dropout(args.hidden_dropout)
         
-            
-
         self.transformer = ParallelTransformer(
             config,
             model_type=args.model_type,
@@ -357,14 +356,15 @@ class CLIP_VitBackbone(MegatronModule):
             drop_path_rate=self.drop_path_rate,
         )
         scale = self.hidden_size ** -0.5
-        if args.v_attentional_pool:
-            self.attn_pool = AttentionalPooler(self.hidden_size, self.hidden_size, n_head=args.v_attn_pooler_heads, n_queries=args.v_nqueries)
-            # What is output dim
-            self.ln_post = torch.nn.LayerNorm(self.hidden_size, eps=1e-5)
-            self.proj = torch.nn.Parameter(scale * torch.randn(self.hidden_size, self.hidden_size))
-        else:
-            self.ln_post = torch.nn.LayerNorm(self.hidden_size, eps=1e-5)
-            self.proj = torch.nn.Parameter(scale * torch.randn(self.hidden_size, self.hidden_size))
+        if self.post_process:
+            if args.v_attentional_pool:
+                self.attn_pool = AttentionalPooler(self.hidden_size, self.hidden_size, n_head=args.v_attn_pooler_heads, n_queries=args.v_nqueries)
+                # What is output dim
+                self.ln_post = torch.nn.LayerNorm(self.hidden_size, eps=1e-5)
+                self.proj = torch.nn.Parameter(scale * torch.randn(self.hidden_size, args.clip_embeded_dim))
+            else:
+                self.ln_post = torch.nn.LayerNorm(self.hidden_size, eps=1e-5)
+                self.proj = torch.nn.Parameter(scale * torch.randn(self.hidden_size, args.clip_embeded_dim))
 
     def set_input_tensor(self, input_tensor):
         """See megatron.model.transformer.set_input_tensor()"""
@@ -384,23 +384,23 @@ class CLIP_VitBackbone(MegatronModule):
             return x[:, 0], x[:, 1:]
         
     def forward(self, input):
-
         if self.pre_process:
             rearranged_input = einops.rearrange(
                 input,
-                "b c (h p1) (w p2) -> b (h w) (p1 p2 c)",
+                "b c (h p1) (w p2) -> b (h w) (p1 p2 c)", # 16 256 hidden_width
                 p1=self.patch_dim,
                 p2=self.patch_dim,
             )
-
+            rearranged_input = rearranged_input.to(torch.half)
+            
             assert rearranged_input.dtype == torch.half
             encoder_output = self.linear_encoder(rearranged_input)
-
-            concatenated_tokens = encoder_output
             if self.class_token:
                 cls_tokens = self.cls_token.expand(encoder_output.shape[0], -1, -1)
                 concatenated_tokens = torch.cat((cls_tokens, encoder_output), dim=1)
-
+            else:
+                concatenated_tokens = encoder_output
+            # print(concatenated_tokens.shape, self.position_ids.shape,self.position_ids[:, :concatenated_tokens.shape[1]].shape)
             token_embeddings = concatenated_tokens + \
                     self.position_embeddings(self.position_ids[:, :concatenated_tokens.shape[1]])
             # Add patch dropout and layernorm
@@ -429,7 +429,6 @@ class CLIP_VitBackbone(MegatronModule):
             
             if self.output_tokens:
                 return pooled, tokens
-            
             return pooled
 
         return hidden_states

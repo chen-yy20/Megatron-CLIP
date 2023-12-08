@@ -227,6 +227,19 @@ def print_rank_0(message):
     else:
         print(message, flush=True)
 
+def print_rank_all(message):
+    """If distributed is initialized, print only on rank 0."""
+    rank = 0
+    if torch.distributed.is_initialized():
+        rank = torch.distributed.get_rank()
+        print(f"--Rank {rank}: {message}", flush=True)
+        torch.distributed.barrier()
+    else:
+        print(message, flush= True)
+    if rank == 0:
+        print("===============================", flush=True)
+    
+
 def is_last_rank():
     return torch.distributed.get_rank() == (
         torch.distributed.get_world_size() - 1)

@@ -151,6 +151,10 @@ class FusedScaleMaskSoftmax(nn.Module):
 
     def is_kernel_available(self, mask, b, np, sq, sk):
         attn_batches = b * np
+        # FIXME： 先不管了
+        from megatron.core.parallel_state import has_extra_branch
+        if has_extra_branch():
+            return False
 
         if (
             self.scaled_masked_softmax_fusion  # user want to fuse

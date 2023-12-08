@@ -14,6 +14,7 @@ import time
 # The earliest we can measure the start time.
 _TRAIN_START_TIME = time.time()
 import torch
+import torch.distributed
 
 from megatron import get_args
 from megatron import get_signal_handler
@@ -26,7 +27,7 @@ from megatron import is_last_rank
 from megatron import update_num_microbatches
 from megatron.core import mpu, tensor_parallel
 from megatron.core.utils import get_model_config
-from megatron import print_rank_0
+from megatron import print_rank_0, print_rank_all
 from megatron import print_rank_last
 from megatron.checkpointing import load_checkpoint
 from megatron.checkpointing import save_checkpoint
@@ -143,7 +144,7 @@ def pretrain(train_valid_test_dataset_provider,
                 train_valid_test_dataset_provider)
     timers('train/valid/test-data-iterators-setup').stop()
     print_datetime('after dataloaders are built')
-
+    
     # Print setup timing.
     print_rank_0('done with setup ...')
     
@@ -424,34 +425,28 @@ def train_step(forward_step_func, data_iterator,
     optimizer.zero_grad()
 
     # Forward pass.
+    # interleaving or not => fw/bw func
     forward_backward_func = get_forward_backward_func()
-    if torch.distributed.get_rank() == 0 and step_cnt ==0 and False:
-        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-                     on_trace_ready= tensorboard_trace_handler('./zTrace3'),
-                     profile_memory=True, record_shapes=True, with_stack=True, 
-                     ) as prof:
-            losses_reduced = forward_backward_func(
-                forward_step_func=forward_step_func,
-                data_iterator=data_iterator,
-                model=model,
-                num_microbatches=get_num_microbatches(),
-                seq_length=args.seq_length,
-                micro_batch_size=args.micro_batch_size,
-                decoder_seq_length=args.decoder_seq_length,
-                forward_only=False)
-            prof.step()
-            step_cnt += 1
-    else:
-        losses_reduced = forward_backward_func(
-                forward_step_func=forward_step_func,
-                data_iterator=data_iterator,
-                model=model,
-                num_microbatches=get_num_microbatches(),
-                seq_length=args.seq_length,
-                micro_batch_size=args.micro_batch_size,
-                decoder_seq_length=args.decoder_seq_length,
-                forward_only=False)
-
+    losses_reduced = forward_backward_func(
+            forward_step_func=forward_step_func,
+            data_iterator=data_iterator,
+            model=model,
+            num_microbatches=get_num_microbatches(),
+            seq_length=args.seq_length,
+            micro_batch_size=args.micro_batch_size,
+            decoder_seq_length=args.decoder_seq_length,
+            forward_only=False)
+    # from megatron.core.pipeline_parallel.schedules import forward_backward_pipelining_without_interleaving
+    # losses_reduced = forward_backward_pipelining_without_interleaving(
+    #         forward_step_func=forward_step_func,
+    #         data_iterator=data_iterator,
+    #         model=model,
+    #         num_microbatches=get_num_microbatches(),
+    #         seq_length=args.seq_length,
+    #         micro_batch_size=args.micro_batch_size,
+    #         decoder_seq_length=args.decoder_seq_length,
+    #         forward_only=False)
+    print(f"Rank {args.rank}: Finished calling forward backward func", flush=True)
     # Empty unused memory.
     if args.empty_unused_memory_level >= 1:
         torch.cuda.empty_cache()
@@ -769,6 +764,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
 
             update_num_microbatches(args.consumed_train_samples)
             args.curr_iteration = iteration
+            print_rank_all("Begin train step.")
             loss_dict, skipped_iter, grad_norm, num_zeros_in_grad = \
                 train_step(forward_step_func,
                         train_data_iterator,
@@ -1022,7 +1018,6 @@ def build_train_valid_test_data_loaders(
     """Build pretraining data loaders."""
 
     args = get_args()
-
     (train_dataloader, valid_dataloader, test_dataloader) = (None, None, None)
 
     print_rank_0('> building train, validation, and test datasets ...')
@@ -1038,14 +1033,16 @@ def build_train_valid_test_data_loaders(
                 args.eval_iters * args.global_batch_size
 
     # Data loader only on rank 0 of each model parallel group.
+    print_rank_all("Begin flag broadcasting")
     if mpu.get_tensor_model_parallel_rank() == 0:
 
-        # Build datasets. 这个就是纯粹调用了build_train_valid_test_datasets_provider，外加打印一些搞笑信息
+        # Build datasets. 这个就是纯粹调用了build_train_valid_test_datasets_provider
         train_ds, valid_ds, test_ds = build_train_valid_test_datasets(
             build_train_valid_test_datasets_provider)
         # Build dataloders.
         if args.tokenizer_type == "CLIPTokenizer":
             train_dataloader = train_ds.dataloader
+
         else:
             train_dataloader = build_pretraining_data_loader(
                 train_ds, args.consumed_train_samples)
@@ -1070,9 +1067,13 @@ def build_train_valid_test_data_loaders(
     torch.distributed.broadcast(flags,
                                 mpu.get_tensor_model_parallel_src_rank(),
                                 group=mpu.get_tensor_model_parallel_group())
+    
     args.do_train = flags[0].item()
     args.do_valid = flags[1].item()
     args.do_test = flags[2].item()
+    print_rank_all(f"finished broadcasting flags {args.do_train} {args.do_valid} {args.do_test}")
+    
+    # print(f"Rank {rank}: do_train: {args.do_train}, do_valid: {args.do_valid}, do_test: {args.do_test}", flush= True)
 
     return train_dataloader, valid_dataloader, test_dataloader
 
@@ -1087,7 +1088,6 @@ def build_train_valid_test_data_iterators(
     train_dataloader, valid_dataloader, test_dataloader = \
         build_train_valid_test_data_loaders(
             build_train_valid_test_datasets_provider)
-
     # Build iterators.
     dl_type = args.dataloader_type
     assert dl_type in ['single', 'cyclic']
@@ -1109,5 +1109,5 @@ def build_train_valid_test_data_iterators(
                              else iter(cyclic_iter(test_dataloader))
     else:
         test_data_iterator = None
-
+    
     return train_data_iterator, valid_data_iterator, test_data_iterator

@@ -18,11 +18,11 @@ cd /home/chen-yy20/Megatron-LM
 TRAIN_SAMPLES=$(( $GLOBAL_BATCH_SIZE * 2))
 
 PROFILER_LOG_PATH=$PROFILER_LOG_PATH \
-exec python -W ignore\
+exec python -W ignore \
         ./pretrain_CLIP.py \
         --transformer-impl local \
-	--tensor-model-parallel-size 1 \
-	--pipeline-model-parallel-size 4 \
+	--tensor-model-parallel-size 2 \
+	--pipeline-model-parallel-size 1 \
 	--num-layers 12 \
 	--hidden-size 512 \
         --num-attention-heads 8 \
@@ -45,11 +45,14 @@ exec python -W ignore\
         --adam-beta2 0.95 \
         --init-method-std 0.002 \
         --fp16 \
-        --recompute-granularity selective \
-        --extra-world-size 8 \
+        --extra-world-size 4 \
         --xtensor-model-parallel-size 2 \
-        --xpipeline-model-parallel-size 2 \
+        --xpipeline-model-parallel-size 1 \
         --tokenizer-type CLIPTokenizer \
+        --img-h 256 \
+        --img-w 256 \
+        --v-global-average-pool \
+        # --recompute-granularity selective \
         # --train-data-path /mnt/zoltan/zanzong/CC3M/cc3m/{00000..00331}.tar \
         # --num-layers-per-virtual-pipeline-stage 1 \
         # --tensorboard-profile \

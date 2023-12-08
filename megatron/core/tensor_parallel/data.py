@@ -1,6 +1,7 @@
 # Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
 
 import torch
+import torch.distributed
 
 from megatron.core.parallel_state import (
     get_tensor_model_parallel_group,
@@ -29,17 +30,20 @@ def _build_key_size_numel_dictionaries(keys, data):
     if get_tensor_model_parallel_rank() == 0:
         offset = 0
         for key in keys:
+            # print(f"Rank {rank} key {key} data.shape {data.shape}", flush=True)
             assert data[key].dim() < max_dim, 'you should increase MAX_DATA_DIM'
             size = data[key].size()
             for i, s in enumerate(size):
                 sizes[i + offset] = s
             offset += max_dim
-
     # Move to GPU and broadcast.
     sizes_cuda = torch.cuda.LongTensor(sizes)
+    rank = torch.distributed.get_rank()
+    print(f"Rank {rank} sizes_cuda {sizes_cuda} => begin broadcast, group: {get_tensor_model_parallel_group()}", flush=True)
     torch.distributed.broadcast(
         sizes_cuda, get_tensor_model_parallel_src_rank(), group=get_tensor_model_parallel_group()
     )
+    # print(f"Rank {rank} sizes_cuda {sizes_cuda} => finish broadcast", flush=True)
 
     # Move back to cpu and unpack.
     sizes_cpu = sizes_cuda.cpu()
@@ -74,6 +78,8 @@ def broadcast_data(keys, data, datatype):
         datatype: torch data type of all tensors in data associated
                   with keys.
     """
+    rank = torch.distributed.get_rank()
+    # print(f"Rank {rank} keys {keys} => begin broadcast_data()", flush=True)
     # Build (key, size) and (key, number of elements) dictionaries along
     # with the total number of elements on all ranks.
     key_size, key_numel, total_numel = _build_key_size_numel_dictionaries(keys, data)

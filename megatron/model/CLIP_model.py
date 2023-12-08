@@ -33,14 +33,6 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.models.common.embeddings.rotary_pos_embedding import RotaryEmbedding
 
 
-# Shall we use this layernorm?
-class LayerNorm(nn.LayerNorm):
-    """Subclass torch's LayerNorm (with cast back to input dtype)."""
-
-    def forward(self, x: torch.Tensor):
-        orig_type = x.dtype
-        x = F.layer_norm(x, self.normalized_shape, self.weight, self.bias, self.eps)
-        return x.to(orig_type)
 
 # Vision Model
 
@@ -50,7 +42,7 @@ class CLIPVisionModel(MegatronModule):
     def __init__(self, config, args, 
                  pre_process=True, 
                  post_process=True,
-                 image_projection = False,
+                 image_projection = True,
                  ):
         super().__init__(config=config)
         args = get_args()
@@ -58,10 +50,14 @@ class CLIPVisionModel(MegatronModule):
         self.hidden_size = args.v_hidden_size
         self.pre_process = pre_process
         self.post_process = post_process
+        self.layernorm = nn.LayerNorm(config.hidden_size)
         self.model_type = ModelType.encoder_or_decoder
-        if image_projection:
-            scale = args.v_hidden_size ** -0.5
-            self.image_projection = nn.Parameter(scale * torch.randn(config.hidden_size, args.clip_embeded_dim))
+        self.image_projection = image_projection
+        if self.post_process:
+            if self.image_projection:
+                scale = args.v_hidden_size ** -0.5
+                self.projection = nn.Parameter(scale * torch.randn(config.hidden_size, args.clip_embeded_dim))
+
         self.backbone = CLIP_VitBackbone(
             config=config,
             pre_process=self.pre_process,
@@ -75,13 +71,12 @@ class CLIPVisionModel(MegatronModule):
         self.backbone.set_input_tensor(input_tensor)
 
     def forward(self, input):
-        hidden_states = self.backbone(input)
-        if self.post_process:
-            hidden_states = hidden_states.permute(1, 0, 2)
-            hidden_states = LayerNorm(hidden_states)
-            if self.image_projection:
-                hidden_states = hidden_states @ self.image_projection
-        return hidden_states
+        # post process 都在 Vit-backbone里面完成了
+        pooled, tokens = self.backbone(input) # len(hidden_states) = 2
+        # if self.post_process and self.image_projection:
+        #     output = pooled @ self.projection
+        output = pooled
+        return output
         
 
 # Text Model
@@ -130,9 +125,9 @@ class CLIPTextModel(MegatronModule):
         config,
         pre_process = True,
         post_process = True,
-        add_pooler = False,
-        return_embeddings = False,
-        text_projection = False,
+        add_pooler = True, # mean pooler
+        return_embeddings = True,
+        text_projection = True,
     ):
         super().__init__(config=config)
         args = get_args()
@@ -140,6 +135,7 @@ class CLIPTextModel(MegatronModule):
         self.post_process = post_process
         self.add_pooler = add_pooler
         self.return_embeddings = return_embeddings
+        self.layernorm = nn.LayerNorm(config.hidden_size)
         if self.return_embeddings and self.post_process:
             assert self.add_pooler
 
@@ -157,7 +153,7 @@ class CLIPTextModel(MegatronModule):
         self.initialize_word_embeddings()
 
         if self.post_process and text_projection:
-            self.text_projection = nn.Parameter(torch.empty(config.hidden_size, args.clip_embeded_dim))
+                self.text_projection = nn.Parameter(torch.empty(config.hidden_size, args.clip_embeded_dim))
        
 
     def set_input_tensor(self, input_tensor):
@@ -168,6 +164,7 @@ class CLIPTextModel(MegatronModule):
     def forward(
         self,
         input_ids,
+        text,   # [batchsize, seq_length]  
         labels = None,
     ) -> Tensor:
 
@@ -184,12 +181,11 @@ class CLIPTextModel(MegatronModule):
             input_ids,
             position_ids,
             extended_attention_mask,
-            token_type_ids=None, # FIXME: token_type_ids， while it can be None
+            tokentype_ids=None, # FIXME: token_type_ids， while it can be None
         )
+        lm_ouput = lm_ouput[0]
 
         if self.post_process and self.add_pooler:
-            lm_ouput, pooled_output = lm_ouput
-
             if self.return_embeddings:
                 embeddings = torch.transpose(lm_ouput, 0, 1)
                 masks = torch.sum(attention_mask, dim=-1)
@@ -210,9 +206,12 @@ class CLIPTextModel(MegatronModule):
             pooled_output = None
 
         if self.post_process:
-            lm_output = lm_output.permute(1, 0, 2) # [b s h] => [s b h]
-            output = LayerNorm(lm_output)
-            output = output @ self.text_projection
+            output = lm_ouput.permute(1, 0, 2) # 已经是[s, b, h]
+            output = self.layernorm(output)
+            # take features from the eot embedding (eot_token is the highest number in each sequence)
+            output = output[torch.arange(output.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+            # return F.normalize(x, dim=-1) if normalize else x
+
             return output
         else:
             return lm_ouput
@@ -255,7 +254,7 @@ class CLIPTextModel(MegatronModule):
             self.word_embeddings.load_state_dict(
                 state_dict[self._word_embeddings_for_head_key], strict=strict)
 
-
+# TODO: To be done
 class CLIPModel(MegatronModule):
     output_dict: torch.jit.Final[bool]
 
