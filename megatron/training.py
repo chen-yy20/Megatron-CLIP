@@ -156,8 +156,6 @@ def pretrain(train_valid_test_dataset_provider,
         if args.dataloader_type == 'cyclic' and args.retro_add_retriever:
             args.train_iters = args.retro_cyclic_train_iters
             print_rank_0("retro cyclic train iters : %d" % args.train_iters)
-        # exit()
-        # TODO: 目前CLIP可以运行到这一步
         iteration = 0
         if args.do_train and args.train_iters > 0:
             iteration = train(forward_step_func,
