@@ -136,6 +136,7 @@ class CLIPTextModel(MegatronModule):
         self.add_pooler = add_pooler
         self.return_embeddings = return_embeddings
         self.layernorm = nn.LayerNorm(config.hidden_size)
+        self.text_projection = text_projection
         if self.return_embeddings and self.post_process:
             assert self.add_pooler
 
@@ -153,7 +154,8 @@ class CLIPTextModel(MegatronModule):
         self.initialize_word_embeddings()
 
         if self.post_process and text_projection:
-                self.text_projection = nn.Parameter(torch.empty(config.hidden_size, args.clip_embeded_dim))
+                self.projection = nn.Parameter(torch.empty(config.hidden_size, args.clip_embeded_dim))
+                init_method_normal(args.init_method_std)(self.projection) 
        
 
     def set_input_tensor(self, input_tensor):
@@ -175,7 +177,6 @@ class CLIPTextModel(MegatronModule):
         # 使用全局的attention mask
         attention_mask = torch.ones(batch_size, seq_length)
         extended_attention_mask = torch.ones(batch_size, 1, seq_length, seq_length, dtype=torch.bool, device=torch.cuda.current_device())
-        
         # Run decoder.
         lm_ouput = self.language_model( 
             input_ids,
@@ -185,31 +186,37 @@ class CLIPTextModel(MegatronModule):
         )
         lm_ouput = lm_ouput[0]
 
-        if self.post_process and self.add_pooler:
-            if self.return_embeddings:
-                embeddings = torch.transpose(lm_ouput, 0, 1)
-                masks = torch.sum(attention_mask, dim=-1)
+        # if self.post_process and self.add_pooler:
+        #     if self.return_embeddings:
+        #         embeddings = torch.transpose(lm_ouput, 0, 1)
+        #         masks = torch.sum(attention_mask, dim=-1)
 
-                output = torch.zeros(
-                    size = (embeddings.shape[0], embeddings.shape[2]),
-                    dtype=torch.float32,
-                    device=torch.cuda.current_device(),
-                )
-                for i, (embdding, mask) in enumerate(zip(embeddings, masks)):
-                    output[i, :] = torch.mean(embdding[1:mask-1], dim=0)
+        #         output = torch.zeros(
+        #             size = (embeddings.shape[0], embeddings.shape[2]),
+        #             dtype=torch.float32,
+        #             device=torch.cuda.current_device(),
+        #         )
+        #         for i, (embdding, mask) in enumerate(zip(embeddings, masks)):
+        #             output[i, :] = torch.mean(embdding[1:mask-1], dim=0)
 
-                return output
+        #         return output
 
 
         # logits, _ = self.output_layer(hidden_states, weight=output_weight)
-        else:
-            pooled_output = None
+        # else:
+        #     pooled_output = None
 
         if self.post_process:
-            output = lm_ouput.permute(1, 0, 2) # 已经是[s, b, h]
+            output = lm_ouput.permute(1, 0, 2) # [s, b, h] -> [b, s, h]
             output = self.layernorm(output)
             # take features from the eot embedding (eot_token is the highest number in each sequence)
-            output = output[torch.arange(output.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+            text = text[:,1:] # begin and end is both 49408
+            output = output[torch.arange(output.shape[0]), text.argmax(dim=-1)]
+            if self.text_projection:
+                output = output @ self.projection
+
+            
+            # output = output[torch.arange(output.shape[0]), text.argmax(dim=-1)] @ self.text_projection
             # return F.normalize(x, dim=-1) if normalize else x
 
             return output

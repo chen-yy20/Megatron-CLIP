@@ -164,8 +164,8 @@ def forward_step(data_iterator, model):
 
     tokens, loss_mask, attention_mask, position_ids = get_batch(data_iterator)
 
+    # print_rank_all(f"input tokens: {tokens.shape} {tokens[:1,:10]}")
     print_rank_all(f"input tokens: {tokens.shape}")
-
     timers('batch-generator').stop()
     if is_extra_branch_rank():
         # BERT lm
@@ -173,8 +173,8 @@ def forward_step(data_iterator, model):
     else:
         # Vit Backbone
         output_tensor = model(tokens)
-
     print_rank_all(f"final-output: {output_tensor.shape}")
+    # print_rank_all(f"final-output: {output_tensor[:1,:10]}")
     exit()
 
     return output_tensor, loss_func
