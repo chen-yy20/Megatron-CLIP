@@ -173,7 +173,7 @@ def loss_func(output):
     
     text_features = text_output.contiguous().float()
     image_features = image_output.contiguous().float()
-
+    print(f"text={text_features}, image={image_features}", flush=True)
     labels = torch.arange(text_output.shape[0], dtype=torch.long, device=torch.cuda.current_device())
     text_logits = text_features @ image_features.T
     image_logits = image_features @ text_features.T

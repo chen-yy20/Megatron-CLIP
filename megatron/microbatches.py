@@ -57,7 +57,7 @@ class NumMicroBatchesCalculator(ABC):
 
 
 class ConstantNumMicroBatches(NumMicroBatchesCalculator):
-
+    # TODO: For multi-branch CLIP, number of micro-batches is different w.r.t data parallel size
     def __init__(self, global_batch_size, micro_batch_size, data_parallel_size):
         micro_batch_times_data_parallel = micro_batch_size * \
                                           data_parallel_size

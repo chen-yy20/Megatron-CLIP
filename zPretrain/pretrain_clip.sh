@@ -13,9 +13,9 @@ source ~/workspace/mega-env/bin/activate
 # source /opt/spack/share/spack/setup-env.sh;spack load cuda@11.8.0;spack load gcc@10.2.0;spack load nccl@2.10.3
 cd /home/zanzong/workspace/Megatron-CLIP
 
-
+export GLOBAL_BATCH_SIZE=64
 # TRAIN_SAMPLES=$(( $GLOBAL_BATCH_SIZE * 50))
-TRAIN_SAMPLES=$(( $GLOBAL_BATCH_SIZE * 2))
+TRAIN_SAMPLES=$(( $GLOBAL_BATCH_SIZE * 10))
 
 PROFILER_LOG_PATH=$PROFILER_LOG_PATH \
 exec python -W ignore \
@@ -28,9 +28,9 @@ exec python -W ignore \
         --num-attention-heads 8 \
         --seq-length 1024 \
         --max-position-embeddings 1024 \
-        --micro-batch-size 4 \
-        --global-batch-size 64 \
-        --train-samples 128 \
+        --global-batch-size $GLOBAL_BATCH_SIZE \
+        --micro-batch-size 16 \
+        --train-samples $TRAIN_SAMPLES \
 	--lr-decay-samples 4882800 \
         --lr 0.0001 \
         --min-lr 0.00001 \
