@@ -38,8 +38,8 @@ def _build_key_size_numel_dictionaries(keys, data):
             offset += max_dim
     # Move to GPU and broadcast.
     sizes_cuda = torch.cuda.LongTensor(sizes)
-    rank = torch.distributed.get_rank()
-    print(f"Rank {rank} sizes_cuda {sizes_cuda} => begin broadcast, group: {get_tensor_model_parallel_group()}", flush=True)
+    # rank = torch.distributed.get_rank()
+    # print(f"Rank {rank} sizes_cuda {sizes_cuda} => begin broadcast, group: {get_tensor_model_parallel_group()}", flush=True)
     torch.distributed.broadcast(
         sizes_cuda, get_tensor_model_parallel_src_rank(), group=get_tensor_model_parallel_group()
     )

@@ -425,15 +425,18 @@ def train_step(forward_step_func, data_iterator,
     # Forward pass.
     # interleaving or not => fw/bw func
     forward_backward_func = get_forward_backward_func()
+    self_micro_batch_size = args.xmicro_batch_size if mpu.is_extra_branch_rank() else \
+                                args.micro_batch_size
     losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=data_iterator,
             model=model,
             num_microbatches=get_num_microbatches(),
             seq_length=args.seq_length,
-            micro_batch_size=args.micro_batch_size,
+            micro_batch_size=self_micro_batch_size,
             decoder_seq_length=args.decoder_seq_length,
             forward_only=False)
+    # timers.log(["pure-forward"], rank=torch.distributed.get_rank(), normalizer=args.log_interval)
     # from megatron.core.pipeline_parallel.schedules import forward_backward_pipelining_without_interleaving
     # losses_reduced = forward_backward_pipelining_without_interleaving(
     #         forward_step_func=forward_step_func,
@@ -444,7 +447,7 @@ def train_step(forward_step_func, data_iterator,
     #         micro_batch_size=args.micro_batch_size,
     #         decoder_seq_length=args.decoder_seq_length,
     #         forward_only=False)
-    print(f"Rank {args.rank}: Finished calling forward backward func", flush=True)
+    # print(f"Rank {args.rank}: Finished calling forward backward func", flush=True)
     # Empty unused memory.
     if args.empty_unused_memory_level >= 1:
         torch.cuda.empty_cache()
@@ -1031,7 +1034,7 @@ def build_train_valid_test_data_loaders(
                 args.eval_iters * args.global_batch_size
 
     # Data loader only on rank 0 of each model parallel group.
-    print_rank_all("Begin flag broadcasting")
+    # print_rank_all("Begin flag broadcasting")
     if mpu.get_tensor_model_parallel_rank() == 0:
 
         # Build datasets. 这个就是纯粹调用了build_train_valid_test_datasets_provider
@@ -1069,7 +1072,7 @@ def build_train_valid_test_data_loaders(
     args.do_train = flags[0].item()
     args.do_valid = flags[1].item()
     args.do_test = flags[2].item()
-    print_rank_all(f"finished broadcasting flags {args.do_train} {args.do_valid} {args.do_test}")
+    # print_rank_all(f"finished broadcasting flags {args.do_train} {args.do_valid} {args.do_test}")
     
     # print(f"Rank {rank}: do_train: {args.do_train}, do_valid: {args.do_valid}, do_test: {args.do_test}", flush= True)
 

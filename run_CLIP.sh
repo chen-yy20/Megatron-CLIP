@@ -21,8 +21,8 @@ export MODEL_NAME='CLIP'
 # export DATA_PARALLEL_SIZE='2'
 export GPUS_PER_NODE='8'
 # export NNODES=$(( $DATA_PARALLEL_SIZE * $TENSOR_PARALLEL_SIZE * $PIPELINE_PARALLEL_SIZE / $GPUS_PER_NODE))
-export NNODES='1'
-export NODELIST='nico[4]'
+export NNODES='2'
+export NODELIST='nico[3-4]'
 
 # export GLOBAL_BATCH_SIZE='64'
 # export MICRO_BATCH_SIZE='4'
@@ -52,4 +52,4 @@ srun \
 	--ntasks-per-node=$GPUS_PER_NODE \
     --gres=gpu:$GPUS_PER_NODE \
     --export=ALL \
-        bash ./zPretrain/pretrain_clip.sh
+        bash ./zPretrain/pretrain_clip_e.sh

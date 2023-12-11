@@ -9,7 +9,7 @@ import amp_C
 import torch
 
 from megatron import get_timers
-from megatron import print_rank_0
+from megatron import print_rank_0, print_rank_all
 from megatron.core import mpu, tensor_parallel
 from megatron.model import Float16Module
 from megatron.model.module import param_is_not_shared
@@ -287,7 +287,6 @@ class MixedPrecisionOptimizer(MegatronOptimizer):
         torch.distributed.all_reduce(self.found_inf,
                                      op=torch.distributed.ReduceOp.MAX,
                                      group=self.get_model_parallel_group())
-        print(f"rank={torch.distributed.get_rank()}, found_inf={self.found_inf}", flush=True)
         # Check for nan.
         found_inf_flag = (self.found_inf.item() > 0)
 
@@ -305,18 +304,12 @@ class MixedPrecisionOptimizer(MegatronOptimizer):
 
         # Do unscale, check for inf, and update grad scaler only for
         # the case that grad scaler is provided.
-        # TODO: Currentyly, all process will found inf flags. Inf values will
-        #       lead to process broken when invoking clip_grad_norm().
-        #       Workaround the check here.
-                
-        """
         if self.grad_scaler:
 
             # Unscale and check for inf/nan.
             timers('optimizer-unscale-and-check-inf', log_level=1).start(
                 barrier=args.barrier_with_L1_time)
             found_inf_flag = self._unscale_main_grads_and_check_for_nan()
-            print(f"rank={torch.distributed.get_rank()}, found_inf_flag={found_inf_flag}", flush=True)
             timers('optimizer-unscale-and-check-inf').stop()
 
             # We are done with scaling gradients
@@ -325,6 +318,8 @@ class MixedPrecisionOptimizer(MegatronOptimizer):
 
             # If we found inf/nan, skip the update.
             if found_inf_flag:
+                print_rank_all(f"Rank={torch.distributed.get_rank()}, " + \
+                    "in optimzier.step(): found_inf_flag={found_inf_flag}")
                 return False, None, None
 
         # Clip the main gradients.
@@ -335,8 +330,6 @@ class MixedPrecisionOptimizer(MegatronOptimizer):
             grad_norm = self.clip_grad_norm(self.clip_grad,
                                             self.check_for_nan_in_grad)
         timers('optimizer-clip-main-grad').stop()
-        """
-        grad_norm = None
 
         # Count the zeros in the grads.
         timers('optimizer-count-zeros', log_level=1).start(

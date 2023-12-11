@@ -270,6 +270,12 @@ def validate_args(args, defaults={}):
             args.ffn_hidden_size = int((4 * args.hidden_size * 2 / 3) / 64) * 64
         else:
             args.ffn_hidden_size = 4 * args.hidden_size
+            
+    if args.v_ffn_hidden_size is None:
+        if args.swiglu:
+            args.v_ffn_hidden_size = int((4 * args.v_hidden_size * 2 / 3) / 64) * 64
+        else:
+            args.v_ffn_hidden_size = 4 * args.v_hidden_size
 
     if args.kv_channels is None:
         assert args.hidden_size % args.num_attention_heads == 0
@@ -1110,17 +1116,21 @@ def _add_mixed_precision_args(parser):
 
 def _add_distributed_args(parser):
     group = parser.add_argument_group(title='distributed')
-
     group.add_argument('--extra-world-size', type=int, default=0,
                        help='Distributed world world size for extra branch. ')
-    group.add_argument('--tensor-model-parallel-size', type=int, default=1,
-                       help='Degree of tensor model parallelism.')
     group.add_argument('--xtensor-model-parallel-size', type=int, default=1,
-                       help='Degree of extra tensor model parallelism.')
+                    help='Degree of extra tensor model parallelism.')
     group.add_argument('--pipeline-model-parallel-size', type=int, default=1,
                        help='Degree of pipeline model parallelism.')
     group.add_argument('--xpipeline-model-parallel-size', type=int, default=1,
                        help='Degree of extra pipeline model parallelism.')
+    group.add_argument('--xmicro-batch-size', type=int, default=None,
+                       help='Extra batch size per model instance (local batch size). '
+                       'Global batch size is local batch size times data '
+                       'parallel size times number of micro batches.')
+
+    group.add_argument('--tensor-model-parallel-size', type=int, default=1,
+                       help='Degree of tensor model parallelism.')
     group.add_argument('--pipeline-model-parallel-split-rank',
                        type=int, default=None,
                        help='Rank where encoder and decoder should be split.')
@@ -1361,10 +1371,10 @@ def _add_vision_args(parser):
                        help='Number of encoder layers in CLIP Transformer')
     group.add_argument('--v-hidden-size', type=int, default=768,
                           help='Hidden dimension size in CLIP Transformer')
-    group.add_argument('--v-ffn-hidden_size', type=int, default=4*768,
+    group.add_argument('--v-ffn-hidden-size', type=int, default=4*768,
                           help='Transformer Feed-Forward Network hidden size. \
                                 This is set to 4*hidden_size if not provided. Defaults to None.')
-    group.add_argument('--v-num-attention_heads', type=int, default=12,
+    group.add_argument('--v-num-attention-heads', type=int, default=12,
                           help='Attention head number in CLIP Transformer')
     group.add_argument('--v-kv-channels', type=int, default=64,
                           help='Projection weights dimension in multi-head attention. \
@@ -1372,7 +1382,7 @@ def _add_vision_args(parser):
                             Defaults to None.')
     group.add_argument('--v-hidden-dropout', type=float, default=0.1,
                           help='Hidden dropout probability in CLIP Transformer')
-    group.add_argument('--v-attention_dropout', type=float, default=0.1,
+    group.add_argument('--v-attention-dropout', type=float, default=0.1,
                        help = 'Attention dropout probability in CLIP Transformer')
     
     # TODO: 网络参数更新到这里

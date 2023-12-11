@@ -2,6 +2,7 @@
 """Pretrain GPT."""
 
 import os
+import time
 import torch
 from torch import Tensor
 import torch.nn.functional as F
@@ -70,17 +71,14 @@ def model_provider(pre_process=True, post_process=True) -> CLIP_model.CLIPModel:
 
 def get_batch(data_iterator):
     """Generate a batch."""
-    # args = get_args()
-    # Items and their type.
-    datatype = torch.float16
+
     # Broadcast data.
-    # FIXME: 此处的rank0可能有问题
     if data_iterator is not None:
         combine_data = next(data_iterator)
         data = {}
         if is_extra_branch_rank():
             keys = ['text']
-            data['text'] = combine_data[1].to(dtype = torch.float16) # 将数据转换为相同目标类型
+            data['text'] = combine_data[1].to(dtype=torch.int32) # 将数据转换为相同目标类型
         else:
             keys = ['image']
             data['image'] = combine_data[0]
@@ -93,14 +91,15 @@ def get_batch(data_iterator):
         # 非TP的src进程不会得到数据
         keys = ['text'] if is_extra_branch_rank() else ['image']
         data = None
-    print_rank_all(f"keys {keys} iterator {data_iterator} -> begin broadcast_data()")
+    datatype = torch.int32 if is_extra_branch_rank() else torch.float16
+    # print_rank_all(f"keys {keys} iterator {data_iterator} -> begin broadcast_data()")
     data_b = tensor_parallel.broadcast_data(keys, data, datatype)
-    print_rank_all(f"keys {keys} data_b {data_b.keys()}")
+    # print_rank_all(f"keys {keys} data_b {data_b.keys()}")
     # Unpack.
     if is_extra_branch_rank():
         tokens = data_b['text'].long().contiguous()
     else:
-        tokens = data_b['image'].long().contiguous()
+        tokens = data_b['image'].contiguous()
 
     # # Get the masks and postition ids.
     # args.reset_position_ids,
@@ -136,6 +135,66 @@ class GatherLayer(torch.autograd.Function):
         grad_out = torch.zeros_like(input)
         grad_out[:] = grads[torch.distributed.get_rank()]
         return grad_out
+    
+def gather_all_tensors(result: Tensor, group=None):
+    """
+    Function to gather all tensors from several ddp processes onto a list that
+    is broadcasted to all processes. Works on tensors that have the same number
+    of dimensions, but where each dimension may differ. In this case tensors are
+    padded, gathered and then trimmed to secure equal workload for all processes
+
+    Args:
+        result: the value to sync
+        group: the process group to gather results from. Defaults to all processes (world)
+
+    Return:
+        gathered_result: list with size equal to the process group where
+            gathered_result[i] corresponds to result tensor from process i
+    """
+    
+    def _simple_gather_all_tensors(result: Tensor, world_size: int, group=None):
+        gathered_result = [torch.zeros_like(result) for _ in range(world_size)]
+        torch.distributed.all_gather(gathered_result, result, group)
+        return gathered_result
+
+    if group is None:
+        group = torch.distributed.group.WORLD
+
+    # convert tensors to contiguous format
+    result = result.contiguous()
+
+    world_size = torch.distributed.get_world_size(group)
+    torch.distributed.barrier(group=group)
+
+    # if the tensor is scalar, things are easy
+    if result.ndim == 0:
+        return _simple_gather_all_tensors(result, world_size, group)
+
+    # 1. Gather sizes of all tensors
+    local_size = torch.tensor(result.shape, device=result.device)
+    local_sizes = [torch.zeros_like(local_size) for _ in range(world_size)]
+    torch.distributed.all_gather(local_sizes, local_size, group=group)
+    max_size = torch.stack(local_sizes).max(dim=0).values
+    all_sizes_equal = all(all(ls == max_size) for ls in local_sizes)
+
+    # 2. If shapes are all the same, then do a simple gather:
+    if all_sizes_equal:
+        return _simple_gather_all_tensors(result, world_size, group)
+
+    # 3. If not, we need to pad each local tensor to maximum size, gather and then truncate
+    pad_dims = []
+    pad_by = (max_size - local_size).detach().cpu()
+    for val in reversed(pad_by):
+        pad_dims.append(0)
+        pad_dims.append(val.item())
+    result_padded = F.pad(result, pad_dims)
+    gathered_result = [torch.zeros_like(result_padded) for _ in range(world_size)]
+    torch.distributed.all_gather(gathered_result, result_padded, group)
+    for idx, item_size in enumerate(local_sizes):
+        slice_param = [slice(dim_size) for dim_size in item_size]
+        gathered_result[idx] = gathered_result[idx][slice_param]
+    
+    return gathered_result
 
 def loss_func(output):
     """Loss function.
@@ -151,43 +210,43 @@ def loss_func(output):
     # QUESTION: 据说以下做法是可行的
     # combine_output = [torch.zeros(args.micro_batch_size, args.clip_embeded_dim, device=torch.cuda.current_device()) 
     #                   for i in range(world_size)]
-    # torch.distributed.all_gather(combine_output, output)
     # combine_output[torch.distributed.get_rank()] = output
-    combine_output = GatherLayer.apply(output)
-    print_rank_all(f"combine_output: {combine_output[0].shape} {combine_output[0].requires_grad}")
-    
+    # combine_output = GatherLayer.apply(output)
+    # print_rank_all(f"all rank output shapes before allgather={output.shape}")
+    combine_output = gather_all_tensors(output)
+    # print_rank_all(f"all rank output shapes={[t.shape for t in combine_output]}")
 
     image_world_size = world_size - args.extra_world_size
     image_tp_group_num = image_world_size // args.tensor_model_parallel_size
     text_world_size = args.extra_world_size
     text_tp_group_num = text_world_size // args.xtensor_model_parallel_size
-    
     image_output = [combine_output[i * args.tensor_model_parallel_size] for i in range(image_tp_group_num)]
     text_output = [combine_output[i * args.xtensor_model_parallel_size + image_world_size] for i in range(text_tp_group_num)]
-
     # 连接特征
     image_output = torch.cat(image_output, dim=0)
     text_output = torch.cat(text_output, dim=0)
+    image_output.requires_grad = True
+    text_output.requires_grad = True
 
     print_rank_0(f"-LOSS-  image_output: {image_output.requires_grad}  text_output: {text_output.requires_grad}")
-    
-    text_features = text_output.contiguous().float()
-    image_features = image_output.contiguous().float()
-    print(f"text={text_features}, image={image_features}", flush=True)
-    labels = torch.arange(text_output.shape[0], dtype=torch.long, device=torch.cuda.current_device())
-    text_logits = text_features @ image_features.T
-    image_logits = image_features @ text_features.T
-    text_outputs = torch.argmax(text_logits, -1)
-    correct = (text_outputs == labels).float()
-    accuracy = torch.mean(correct)
+    # image_output.register_hook(lambda grad: print(f"gradient of input tensor: {grad}", flush=True))
+    text_features = text_output.contiguous()
+    image_features = image_output.contiguous()
+    logits_per_image = image_features @ text_features.T
+    logits_per_text = text_features @ image_features.T
+    labels = torch.arange(logits_per_image.shape[0], dtype=torch.long, device=torch.cuda.current_device())
+    # text_outputs = torch.argmax(logits_per_text, -1)
+    # correct = (text_outputs == labels).float()
+    # accuracy = torch.mean(correct)
     total_loss = (
-            F.cross_entropy(text_logits, labels) +
-            F.cross_entropy(image_logits, labels)
+            F.cross_entropy(logits_per_text, labels) +
+            F.cross_entropy(logits_per_image, labels)
     ) / 2
-    print_rank_all(f"total_loss: {total_loss} accuracy: {accuracy}")
+    # print_rank_all(f"total_loss: {total_loss}")
+    
     # averaged_loss = average_losses_across_data_parallel_group([total_loss, accuracy]) 
     
-    return total_loss, {"loss": total_loss, "accuracy": accuracy}
+    return total_loss, {"loss": total_loss, "accuracy": 0.0}
 
 
 
@@ -203,12 +262,11 @@ def forward_step(data_iterator, model):
     rank = torch.distributed.get_rank()
     # Get the batch.
     timers('batch-generator', log_level=2).start()
-    print_rank_all("begin get_batch()")
+    # print_rank_all("begin get_batch()")
 
     tokens, loss_mask, attention_mask, position_ids = get_batch(data_iterator)
 
     # print_rank_all(f"input tokens: {tokens.shape} {tokens[:1,:10]}")
-    print_rank_all(f"input tokens: {tokens.shape}")
     timers('batch-generator').stop()
     if is_extra_branch_rank():
         # BERT lm
@@ -216,7 +274,7 @@ def forward_step(data_iterator, model):
     else:
         # Vit Backbone
         output_tensor = model(tokens)
-    print_rank_all(f"final-output: {output_tensor.requires_grad}")
+    # print_rank_all(f"final-output: {output_tensor.requires_grad}")
     # print_rank_all(f"final-output: {output_tensor[:1,:10]}")
     return output_tensor, loss_func
 
@@ -241,7 +299,8 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
     args = get_args()
     img_transform = ClassificationTransform((256, 256))
 
-    dataset_args = DatasetArguments(args.micro_batch_size)
+    self_micro_batch_size = args.xmicro_batch_size if is_extra_branch_rank() else args.micro_batch_size
+    dataset_args = DatasetArguments(self_micro_batch_size)
     data = {}
     data['train'] = get_wds_dataset(dataset_args, img_transform, True, tokenizer=get_tokenizer(dataset_args.model))
     train_ds = data['train']

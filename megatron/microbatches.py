@@ -4,15 +4,22 @@
 
 from abc import ABC
 from abc import abstractmethod
-
+from megatron.core import mpu
 
 def build_num_microbatches_calculator(args):
 
     # Constant num micro-batches.
     if args.rampup_batch_size is None:
+        if mpu.is_extra_branch_rank():
+            mbs = args.xmicro_batch_size
+            dp = args.extra_world_size / (args.xtensor_model_parallel_size \
+                                        * args.xpipeline_model_parallel_size)
+        else:
+            mbs = args.micro_batch_size
+            dp = args.data_parallel_size
         num_microbatches_calculator = ConstantNumMicroBatches(
-            args.global_batch_size, args.micro_batch_size,
-            args.data_parallel_size)
+            args.global_batch_size, mbs, dp)
+        print(f"rank={args.rank}, micro batch size={mbs}, dp={dp}", flush=True)
         if args.rank == 0:
             print('setting number of micro-batches to constant {}'.format(
                 num_microbatches_calculator.get()), flush=True)
@@ -57,7 +64,6 @@ class NumMicroBatchesCalculator(ABC):
 
 
 class ConstantNumMicroBatches(NumMicroBatchesCalculator):
-    # TODO: For multi-branch CLIP, number of micro-batches is different w.r.t data parallel size
     def __init__(self, global_batch_size, micro_batch_size, data_parallel_size):
         micro_batch_times_data_parallel = micro_batch_size * \
                                           data_parallel_size
