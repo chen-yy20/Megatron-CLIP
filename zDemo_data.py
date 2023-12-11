@@ -5,6 +5,7 @@ from open_CLIP.src.open_clip.factory import get_tokenizer
 from open_CLIP.src.open_clip.transform import image_transform
 from megatron.data.vit_dataset import ClassificationTransform
 import argparse
+import torch
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 
 args = parser.parse_args()
@@ -37,10 +38,12 @@ img_data = data[0]
 text_data = data[1]
 eod_token = 49408
 
+# print(img_data.dtype, text_data.dtype)
+text_data = text_data.to(torch.float16)
 print(img_data.shape, img_data)
 # print(len(data[0]), data[1].shape)
-# print(text_data[:5][:20])
-print(text_data == eod_token)
+print(text_data[:5][:20])
+# print(text_data == eod_token)
 # for i, batch in enumerate(dataloader):
 #     images, texts = batch
 #     print(images[0], texts[0])

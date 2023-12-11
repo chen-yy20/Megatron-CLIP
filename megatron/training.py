@@ -466,12 +466,12 @@ def train_step(forward_step_func, data_iterator,
     # Gather params.
     if update_successful:
         optimizer.gather_model_params(args, timers)
-
+    print_rank_all(f"Finished calling 2")
     # Vision momentum.
     if args.vision_pretraining and args.vision_pretraining_type == "dino":
         unwrapped_model = unwrap_model(model[0])
         unwrapped_model.update_momentum(args.curr_iteration)
-
+    
     # Update learning rate.
     if update_successful:
         increment = get_num_microbatches() * \
@@ -481,13 +481,14 @@ def train_step(forward_step_func, data_iterator,
         skipped_iter = 0
     else:
         skipped_iter = 1
-
+    print_rank_all(f"Finished calling 3")
     # Empty unused memory.
     if args.empty_unused_memory_level >= 2:
         torch.cuda.empty_cache()
 
     if mpu.is_pipeline_last_stage(ignore_virtual=True):
         # Average loss across microbatches.
+        print_rank_all(f"Finished calling 3")
         loss_reduced = {}
         for key in losses_reduced[0]:
             losses_reduced_for_key = [x[key] for x in losses_reduced]

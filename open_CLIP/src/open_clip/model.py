@@ -239,6 +239,9 @@ class CLIP(nn.Module):
                 "text_features": text_features,
                 "logit_scale": self.logit_scale.exp()
             }
+        print(f"image_features.shape: {image_features.shape}", flush=True)
+        print(f"text_features.shape: {text_features.shape}",flush=True)
+        # all_image_features.shape=torch.Size([64, 1024]), all_text_features.shape=torch.Size([64, 1024])
         return image_features, text_features, self.logit_scale.exp()
 
 
