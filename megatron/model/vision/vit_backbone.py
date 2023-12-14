@@ -394,7 +394,6 @@ class CLIP_VitBackbone(MegatronModule):
                 p2=self.patch_dim,
             )
             # rearranged_input = rearranged_input.to(torch.half)
-            
             # assert rearranged_input.dtype == torch.half
             encoder_output = self.linear_encoder(rearranged_input)
             if self.class_token:

@@ -7,13 +7,13 @@ set -x
 # fi
 
 export NNODE=1
-export NODELIST="nico3"
+export NODELIST="nico[1]"
 export NTASK_PER_NODE=4
 export PYTHONENV="/home/chen-yy20/mega_env/bin/activate"
 export TIMESTAMP=$(date "+%Y-%m-%d-%H-%M-%S")
 
 srun --exclusive=user \
-    -p V100 \
+    -p Big \
     -N $NNODE \
     -w $NODELIST \
     -K \

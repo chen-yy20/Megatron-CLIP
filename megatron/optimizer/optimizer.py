@@ -318,8 +318,8 @@ class MixedPrecisionOptimizer(MegatronOptimizer):
 
             # If we found inf/nan, skip the update.
             if found_inf_flag:
-                print_rank_all(f"Rank={torch.distributed.get_rank()}, " + \
-                    f"in optimzier.step(): found_inf_flag={found_inf_flag}")
+                print(f"Rank={torch.distributed.get_rank()}, in optimzier.step(): found_inf_flag={found_inf_flag} "\
+                      ,flush=True)
                 return False, None, None
 
         # Clip the main gradients.

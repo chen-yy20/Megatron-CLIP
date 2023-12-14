@@ -32,8 +32,6 @@ from megatron.core.transformer.transformer_block import TransformerBlock
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.models.common.embeddings.rotary_pos_embedding import RotaryEmbedding
 
-
-
 # Vision Model
 
 class CLIPVisionModel(MegatronModule):
@@ -124,7 +122,6 @@ class CLIPTextModel(MegatronModule):
         pre_process = True,
         post_process = True,
         add_pooler = True, # mean pooler
-        return_embeddings = True,
         text_projection = True,
     ):
         super().__init__(config=config)
@@ -132,12 +129,8 @@ class CLIPTextModel(MegatronModule):
         self.pre_process = pre_process
         self.post_process = post_process
         self.add_pooler = add_pooler
-        self.return_embeddings = return_embeddings
         self.layernorm = nn.LayerNorm(config.hidden_size)
         self.text_projection = text_projection
-        if self.return_embeddings and self.post_process:
-            assert self.add_pooler
-
         
         # CLIP 当中的positional_embedding 是 nn.Parameter(torch.empty(self.num_pos, width)) , 我们这里暂且使用RotaryEmbedding
         # 注意设置 args.position_embedding_type == 'rope'
@@ -175,7 +168,6 @@ class CLIPTextModel(MegatronModule):
         text,   # [batchsize, seq_length]  
         labels = None,
     ) -> Tensor:
-
         # get positional ids 
         position_ids = self.CLIP_position_ids(input_ids)
         batch_size = input_ids.shape[0]
@@ -188,27 +180,10 @@ class CLIPTextModel(MegatronModule):
             input_ids,
             position_ids,
             extended_attention_mask,
-            tokentype_ids=None, # FIXME: token_type_ids， while it can be None
+            tokentype_ids=None,
         )
-        # if self.post_process and self.add_pooler:
-        #     if self.return_embeddings:
-        #         embeddings = torch.transpose(lm_ouput, 0, 1)
-        #         masks = torch.sum(attention_mask, dim=-1)
+        # lm_ouput = lm_ouput[0]
 
-        #         output = torch.zeros(
-        #             size = (embeddings.shape[0], embeddings.shape[2]),
-        #             dtype=torch.float32,
-        #             device=torch.cuda.current_device(),
-        #         )
-        #         for i, (embdding, mask) in enumerate(zip(embeddings, masks)):
-        #             output[i, :] = torch.mean(embdding[1:mask-1], dim=0)
-
-        #         return output
-
-
-        # logits, _ = self.output_layer(hidden_states, weight=output_weight)
-        # else:
-        #     pooled_output = None
 
         if self.post_process:
             output, pooled_output = lm_output
@@ -218,7 +193,9 @@ class CLIPTextModel(MegatronModule):
             # text = text[:,1:] # begin and end is both 49408
             # output = output[torch.arange(output.shape[0]), text.argmax(dim=-1)]
             if self.text_projection:
-                lm_output = pooled_output @ self.projection            
+                lm_output = pooled_output @ self.projection 
+        else:
+            lm_output = lm_output[0]        
         return lm_output
 
         
@@ -259,72 +236,48 @@ class CLIPTextModel(MegatronModule):
             self.word_embeddings.load_state_dict(
                 state_dict[self._word_embeddings_for_head_key], strict=strict)
 
-# # TODO: To be done
-# class CLIPModel(MegatronModule):
-#     output_dict: torch.jit.Final[bool]
+# TODO: To be done
+class combined_CLIPModel(MegatronModule):
+    def __init__(
+            self,
+            vision_cfg: TransformerConfig,
+            text_cfg: TransformerConfig,
+            pre_process=True,
+            post_process=True,
+    ):
+        args = get_args()
+        # 这里的config设置是乱设置的，只会影响embedding
+        super().__init__(config=vision_cfg, share_embeddings_and_output_weights=not args.untie_embeddings_and_output_weights)
 
-#     def __init__(
-#             self,
-#             vision_cfg: TransformerConfig,
-#             text_cfg: TransformerConfig,
-#             output_dict: bool = False,
-#     ):
-#         super().__init__()
-#         self.output_dict = output_dict
+        self.visual = CLIPVisionModel(
+                        config=vision_cfg,
+                        args=args,
+                        pre_process=pre_process,
+                        post_process=post_process,
+                        image_projection= True,
+                    )
 
-#         self.visual = CLIPVisionModel(
-#                         config=vision_cfg,
-#                         args=get_args(),
-#                         pre_process=True,
-#                         post_process=True,
-#                         image_projection= True,
-#                     )
+        self.text = CLIPTextModel(
+                        config = text_cfg,
+                        pre_process=pre_process,
+                        post_process=post_process,
+                        add_pooler=True,
+                        text_projection=True,
+                    )
+        self.pre_process = pre_process
+        self.post_process = post_process
 
-#         self.text = CLIPTextModel(
-#                         config = text_cfg,
-#                         pre_process=True,
-#                         post_process=True,
-#                         add_pooler=False,
-#                         return_embeddings=False, # 暂时还不知道这个参数的必要性
-#                         text_projection=True,
-#                     )
-#         self.token_embedding = self.text.embedding # FIXME:
-#         self.transformer = self.text.decoder
-#         self.vocab_size = self.text.vocab_size
-#         self.positional_embedding = self.text.rotary_pos_emb
-#         # FIXME:
-#         self.ln_final = self.text.decoder.ln_final
-#         # self.text_projection = text.text_projection
-#         # self.register_buffer('attn_mask', text.attn_mask, persistent=False)
-#         # 计算相似度
-#         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+    def set_input_tensor(self, input_tensor):
+        self.input_tensor = input_tensor
 
-#     def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
-#         pass
-
-#     def encode_image(self, image, normalize: bool = False):
-#         features = self.visual(image)
-#         return F.normalize(features, dim=-1) if normalize else features
-    
-#     # 为什么这个要提出来算
-#     def encode_text(self, text, normalize: bool = False):
-#         x = self.token_embedding(text)
-#         x = x + self.positional_embedding(text)
-#         x = x.permute(1, 0, 2)
-#         x = self.transformer(x, attn_mask)
-#         x = x.permute(1, 0, 2)
-#         x = self.ln_final(x)
-#         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] # WHAT?
-#         # features = self.text(text)
-#         return F.normalize(x, dim=-1) if normalize else x
+    def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
+        pass
         
-#     def forward(self, image, text):
-#         image_features = self.encode_image(image, normalize=True)
-#         text_features = self.encode_text(text, normalize=True)
-#         if self.output_dict:
-#             return {
-#                 "image_features": image_features,
-#                 "text_features": text_features,
-#                 "logit_scale": self.logit_scale.exp(),
-#             }
-#         return image_features, text_features, self.logit_scale.exp()
+    def forward(self, combine_input):
+        image_tokens = combine_input['image']
+        text_tokens = combine_input['text']
+        image_features = self.visual(image_tokens)
+        text_features = self.text(text_tokens, text_tokens)
+        from megatron import print_rank_all
+        # print_rank_all(f"image_features: {image_features.shape}, text_features: {text_features.shape}")
+        return {'image':image_features, 'text':text_features}
