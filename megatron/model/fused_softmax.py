@@ -150,8 +150,9 @@ class FusedScaleMaskSoftmax(nn.Module):
             return self.forward_torch_softmax(input, mask)
 
     def is_kernel_available(self, mask, b, np, sq, sk):
+        # 直接不管
+        return False
         attn_batches = b * np
-        # FIXME： 先不管了
         from megatron.core.parallel_state import has_extra_branch
         if has_extra_branch():
             return False

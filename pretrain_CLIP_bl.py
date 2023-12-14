@@ -38,7 +38,7 @@ from megatron.data.vit_dataset import ClassificationTransform
 
 # Get data
 
-def model_provider(pre_process=True, post_process=True):
+def model_provider(pre_process=True, post_process=True) -> CLIP_model.combined_CLIPModel:
     """Builds the model. """
     args = get_args()
 
@@ -47,23 +47,13 @@ def model_provider(pre_process=True, post_process=True):
     vision_config = clip_vision_transformer_config_from_args(args)
     embed_dim = 1024
 
-    # 目前先作为两个完全独立的模型来训练
-    if not is_extra_branch_rank():
-        model = CLIP_model.CLIPVisionModel(
-            config=vision_config,
-            args=args,
-            pre_process=pre_process,
-            post_process=post_process,
-            image_projection=True,
-        )
-    else:
-        model = CLIP_model.CLIPTextModel(
-            config = text_config,
-            pre_process = pre_process,
-            post_process = post_process,
-            add_pooler = True,
-            text_projection = True,
-        )
+    model = CLIP_model.combined_CLIPModel(
+        vision_cfg=vision_config,
+        text_cfg=text_config,
+        pre_process=pre_process,
+        post_process=post_process,
+    )
+    model.to(torch.cuda.current_device())
 
     return model
 
@@ -71,52 +61,23 @@ def model_provider(pre_process=True, post_process=True):
 def get_batch(data_iterator):
     """Generate a batch."""
 
-    # Broadcast data.
-    if data_iterator is not None:
-        combine_data = next(data_iterator)
-        data = {}
-        if is_extra_branch_rank():
-            keys = ['text']
-            data['text'] = combine_data[1].to(dtype=torch.int32) # 将数据转换为相同目标类型
-        else:
-            keys = ['image']
-            data['image'] = combine_data[0]
-        # keys = ['image', 'text']
-        # data['image'] = combine_data[0]
-        # data['text'] = combine_data[1].to(dtype = torch.float16)
-        # print_rank_0(f"Data type: {data['image'].dtype} {data['text'].dtype}")
-        
-    else:
-        # 非TP的src进程不会得到数据
-        keys = ['text'] if is_extra_branch_rank() else ['image']
-        data = None
-    datatype = torch.int32 if is_extra_branch_rank() else torch.float16
-    # print_rank_all(f"keys {keys} iterator {data_iterator} -> begin broadcast_data()")
-    data_b = tensor_parallel.broadcast_data(keys, data, datatype)
-    # print_rank_all(f"keys {keys} data_b {data_b.keys()}")
-    # Unpack.
-    if is_extra_branch_rank():
-        tokens = data_b['text'].long().contiguous()
-    else:
-        tokens = data_b['image'].contiguous()
+    # Broadcast data. TP is not used
+    combine_data = next(data_iterator)
+    tokens = {}
+    tokens['image'] = combine_data[0].contiguous().to(torch.cuda.current_device())
+    tokens['text'] = combine_data[1].long().contiguous().to(torch.cuda.current_device()) # 将数据转换为相同目标类型 
+    keys = ['image', 'text']
 
-    # # Get the masks and postition ids.
-    # args.reset_position_ids,
-    #         args.reset_attention_mask,
-    #         args.eod_mask_loss
-    if is_extra_branch_rank():
-        eod_token = 49408 # begin: 49408 end: 49408 
-        attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
-            tokens,
-            eod_token,
-            reset_attention_mask=True,
-            reset_position_ids=True,
-            eod_mask_loss=True,
-            )
+    eod_token = 49408 # begin: 49408 end: 49408 
+    attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
+        tokens['text'],
+        eod_token,
+        reset_attention_mask=True,
+        reset_position_ids=True,
+        eod_mask_loss=True,
+        )
 
-        return tokens, loss_mask, attention_mask, position_ids
-    else:
-        return tokens, None, None, None
+    return tokens
 
 class GatherLayer(torch.autograd.Function):
     """Gather tensors from all process, supporting backward propagation."""
@@ -195,7 +156,7 @@ def gather_all_tensors(result: Tensor, group=None):
     
     return gathered_result
 
-def loss_func(output):
+def loss_func(output_tensor_dict):
     """Loss function.
 
     Args:
@@ -205,43 +166,29 @@ def loss_func(output):
     args = get_args()
     # gather特征，剔除冗余
     world_size = torch.distributed.get_world_size()
-
-    # QUESTION: 据说以下做法是可行的
-    # combine_output = [torch.zeros(args.micro_batch_size, args.clip_embeded_dim, device=torch.cuda.current_device()) 
-    #                   for i in range(world_size)]
-    # combine_output[torch.distributed.get_rank()] = output
-    # combine_output = GatherLayer.apply(output)
-    # print_rank_all(f"all rank output shapes before allgather={output.shape}")
-    combine_output = gather_all_tensors(output)
-    # print_rank_all(f"all rank output shapes={[t.shape for t in combine_output]}")
-
-    image_world_size = world_size - args.extra_world_size
-    image_tp_group_num = image_world_size // args.tensor_model_parallel_size
-    text_world_size = args.extra_world_size
-    text_tp_group_num = text_world_size // args.xtensor_model_parallel_size
-    image_output = [combine_output[i * args.tensor_model_parallel_size] for i in range(image_tp_group_num)]
-    text_output = [combine_output[i * args.xtensor_model_parallel_size + image_world_size] for i in range(text_tp_group_num)]
-    # 连接特征
-    image_output = torch.cat(image_output, dim=0)
-    text_output = torch.cat(text_output, dim=0)
-    image_output.requires_grad = True
-    text_output.requires_grad = True
-
-    print_rank_0(f"-LOSS-  image_output: {image_output.requires_grad}  text_output: {text_output.requires_grad}")
+    image_output = output_tensor_dict['image']
+    text_output = output_tensor_dict['text']
+    combined_image_output = gather_all_tensors(image_output)
+    combined_text_output = gather_all_tensors(text_output)
+    combined_image_output = torch.cat(combined_image_output, dim=0)
+    combined_text_output = torch.cat(combined_text_output, dim=0)
+    combined_image_output.requires_grad = True
+    combined_text_output.requires_grad = True
+    # print_rank_all(f"combined_image_output: {combined_image_output.shape} combined_text_output: {combined_text_output.shape}")
     # image_output.register_hook(lambda grad: print(f"gradient of input tensor: {grad}", flush=True))
-    text_features = text_output.contiguous()
-    image_features = image_output.contiguous()
+    text_features = combined_text_output.contiguous()
+    image_features = combined_image_output.contiguous()
     logits_per_image = image_features @ text_features.T
     logits_per_text = text_features @ image_features.T
     labels = torch.arange(logits_per_image.shape[0], dtype=torch.long, device=torch.cuda.current_device())
-    # text_outputs = torch.argmax(logits_per_text, -1)
-    # correct = (text_outputs == labels).float()
-    # accuracy = torch.mean(correct)
+    text_outputs = torch.argmax(logits_per_text, -1)
+    correct = (text_outputs == labels).float()
+    accuracy = torch.mean(correct)
     total_loss = (
             F.cross_entropy(logits_per_text, labels) +
             F.cross_entropy(logits_per_image, labels)
     ) / 2
-    # print_rank_all(f"total_loss: {total_loss}")
+    # print_rank_all(f"total_loss: {total_loss}, accuracy: {accuracy}")
     
     # averaged_loss = average_losses_across_data_parallel_group([total_loss, accuracy]) 
     
@@ -263,19 +210,15 @@ def forward_step(data_iterator, model):
     timers('batch-generator', log_level=2).start()
     # print_rank_all("begin get_batch()")
 
-    tokens, loss_mask, attention_mask, position_ids = get_batch(data_iterator)
-
+    input_pairs = get_batch(data_iterator)
     # print_rank_all(f"input tokens: {tokens.shape} {tokens[:1,:10]}")
     timers('batch-generator').stop()
-    if is_extra_branch_rank():
-        # BERT lm
-        output_tensor = model(tokens,tokens) # 此处一个是stage间输入，一个是text原始输入
-    else:
-        # Vit Backbone
-        output_tensor = model(tokens)
+    output_tensor_dict = model(input_pairs)
+    image_output = output_tensor_dict['image']
+    text_output = output_tensor_dict['text']
     # print_rank_all(f"final-output: {output_tensor.requires_grad}")
-    # print_rank_all(f"final-output: {output_tensor[:1,:10]}")
-    return output_tensor, loss_func
+    # print_rank_all(f"final-output- image:{image_output.shape} text:{text_output.shape}")
+    return output_tensor_dict, loss_func
 
 
 class DatasetArguments:

@@ -436,18 +436,7 @@ def train_step(forward_step_func, data_iterator,
             micro_batch_size=self_micro_batch_size,
             decoder_seq_length=args.decoder_seq_length,
             forward_only=False)
-    # timers.log(["pure-forward"], rank=torch.distributed.get_rank(), normalizer=args.log_interval)
-    # from megatron.core.pipeline_parallel.schedules import forward_backward_pipelining_without_interleaving
-    # losses_reduced = forward_backward_pipelining_without_interleaving(
-    #         forward_step_func=forward_step_func,
-    #         data_iterator=data_iterator,
-    #         model=model,
-    #         num_microbatches=get_num_microbatches(),
-    #         seq_length=args.seq_length,
-    #         micro_batch_size=args.micro_batch_size,
-    #         decoder_seq_length=args.decoder_seq_length,
-    #         forward_only=False)
-    # print(f"Rank {args.rank}: Finished calling forward backward func", flush=True)
+    timers.log(["pure-forward"], rank=torch.distributed.get_rank(), normalizer=args.log_interval)
     # Empty unused memory.
     if args.empty_unused_memory_level >= 1:
         torch.cuda.empty_cache()
@@ -466,7 +455,6 @@ def train_step(forward_step_func, data_iterator,
     # Gather params.
     if update_successful:
         optimizer.gather_model_params(args, timers)
-    print_rank_all(f"Finished calling 2")
     # Vision momentum.
     if args.vision_pretraining and args.vision_pretraining_type == "dino":
         unwrapped_model = unwrap_model(model[0])
@@ -481,14 +469,12 @@ def train_step(forward_step_func, data_iterator,
         skipped_iter = 0
     else:
         skipped_iter = 1
-    print_rank_all(f"Finished calling 3")
     # Empty unused memory.
     if args.empty_unused_memory_level >= 2:
         torch.cuda.empty_cache()
 
     if mpu.is_pipeline_last_stage(ignore_virtual=True):
         # Average loss across microbatches.
-        print_rank_all(f"Finished calling 3")
         loss_reduced = {}
         for key in losses_reduced[0]:
             losses_reduced_for_key = [x[key] for x in losses_reduced]
@@ -565,6 +551,7 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
     # Calculate batch size.
     batch_size = args.micro_batch_size * args.data_parallel_size * \
         get_num_microbatches()
+    # batch_size = args.global_batch_size
 
     total_iterations = total_loss_dict[advanced_iters_key] + \
                        total_loss_dict[skipped_iters_key]
@@ -682,6 +669,8 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
             total_loss_dict[skipped_iters_key])
         log_string += ' number of nan iterations: {:3d} |'.format(
             total_loss_dict[nan_iters_key])
+        log_string += ' training throughput (sample/s): {:.2f} |'.format(
+            batch_size / elapsed_time_per_iteration)
         total_loss_dict[advanced_iters_key] = 0
         total_loss_dict[skipped_iters_key] = 0
         total_loss_dict[nan_iters_key] = 0
@@ -766,7 +755,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
 
             update_num_microbatches(args.consumed_train_samples)
             args.curr_iteration = iteration
-            print_rank_all("Begin train step.")
+            # print_rank_all("Begin train step.")
             loss_dict, skipped_iter, grad_norm, num_zeros_in_grad = \
                 train_step(forward_step_func,
                         train_data_iterator,
