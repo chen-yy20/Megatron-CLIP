@@ -25,6 +25,10 @@ _EMBEDDING_GROUP = None
 # Position embedding group.
 _POSITION_EMBEDDING_GROUP = None
 
+# Loss calculation group for multimodal contrastive models.
+_CONTRASTIVE_LOSS_GROUP = None
+_CONTRASTIVE_LOSS_RANK = None
+
 # Data parallel group that the current rank belongs to.
 _DATA_PARALLEL_GROUP = None
 
@@ -244,7 +248,6 @@ def initialize_model_parallel(
     else:
         _HAVE_EXTRA_BRANCH = False
 
-    
     if (
         world_size
         % (real_tensor_model_parallel_size * real_pipeline_model_parallel_size * context_parallel_size)
@@ -303,6 +306,7 @@ def initialize_model_parallel(
     assert _DATA_PARALLEL_GROUP is None, 'data parallel group is already initialized'
     global _ALL_DATA_PARALLEL_GROUPS
     all_data_parallel_group_ranks_with_cp = []
+    all_xdata_parallel_group_ranks_with_cp = []
 
     ranks = []
 
@@ -327,15 +331,13 @@ def initialize_model_parallel(
         
         for j in range(tensor_model_parallel_size):
             ranks_with_cp = range(start_rank + j, end_rank, tensor_model_parallel_size)
-            if not is_extra_branch_rank():
-                all_data_parallel_group_ranks_with_cp.append(list(ranks_with_cp))
+            all_data_parallel_group_ranks_with_cp.append(list(ranks_with_cp))
             group_with_cp = torch.distributed.new_group(ranks_with_cp)
             # group_with_cp_gloo = torch.distributed.new_group(ranks_with_cp, backend="gloo")
             if rank in ranks_with_cp:
                 _DATA_PARALLEL_GROUP_WITH_CP = group_with_cp
                 # _DATA_PARALLEL_GROUP_WITH_CP_GLOO = group_with_cp_gloo
                 _DATA_PARALLEL_GLOBAL_RANKS_WITH_CP = ranks_with_cp
-    torch.distributed.barrier()
     if is_multi_branch:
     # extra world DP set up 
         for i in range(xpipeline_model_parallel_size):
@@ -358,8 +360,7 @@ def initialize_model_parallel(
             
             for j in range(xtensor_model_parallel_size):
                 ranks_with_cp = range(start_rank + j, end_rank, xtensor_model_parallel_size)
-                if is_extra_branch_rank():
-                    all_data_parallel_group_ranks_with_cp.append(list(ranks_with_cp))
+                all_xdata_parallel_group_ranks_with_cp.append(list(ranks_with_cp))
                 group_with_cp = torch.distributed.new_group(ranks_with_cp)
                 # group_with_cp_gloo = torch.distributed.new_group(ranks_with_cp, backend="gloo")
                 if rank in ranks_with_cp:
@@ -394,44 +395,101 @@ def initialize_model_parallel(
     global _CONTEXT_PARALLEL_GROUP
     global _CONTEXT_PARALLEL_GLOBAL_RANKS
     assert _CONTEXT_PARALLEL_GROUP is None, 'context parallel group is already initialized'
-    for i in range(max(pipeline_model_parallel_size, xpipeline_model_parallel_size)):
-        for j in range(max(data_parallel_size, xdata_parallel_size)):
+    for i in range(pipeline_model_parallel_size):
+        for j in range(data_parallel_size):
             start_rank = (
                 i * num_pipeline_model_parallel_groups
-                + j * real_tensor_model_parallel_size * context_parallel_size
-                + offset
+                + j * tensor_model_parallel_size * context_parallel_size
             )
             end_rank = (
                 i * num_pipeline_model_parallel_groups
-                + (j + 1) * real_tensor_model_parallel_size * context_parallel_size
-                + offset
+                + (j + 1) * tensor_model_parallel_size * context_parallel_size
             )
-            for k in range(max(tensor_model_parallel_size, xtensor_model_parallel_size)):
-               
-                if k < real_tensor_model_parallel_size and j < real_data_parallel_size and i < real_pipeline_model_parallel_size:
-                    ranks = range(start_rank + k, end_rank, real_tensor_model_parallel_size)
-                # print_rank_0(f"CP group: {ranks}")
+            for k in range(tensor_model_parallel_size):
+                ranks = range(start_rank + k, end_rank, tensor_model_parallel_size)
                 group = torch.distributed.new_group(ranks)
-                
                 if rank in ranks:
                     _CONTEXT_PARALLEL_GROUP = group
                     _CONTEXT_PARALLEL_GLOBAL_RANKS = ranks
+    if is_multi_branch:
+        for i in range(xpipeline_model_parallel_size):
+            for j in range(xdata_parallel_size):
+                start_rank = (
+                    i * x_num_pipeline_model_parallel_groups
+                    + j * xtensor_model_parallel_size * context_parallel_size
+                )
+                start_rank += ori_world_size
+                end_rank = (
+                    i * x_num_pipeline_model_parallel_groups
+                    + (j + 1) * xtensor_model_parallel_size * context_parallel_size
+                )
+                end_rank += ori_world_size
+                for k in range(xtensor_model_parallel_size):
+                    ranks = range(start_rank + k, end_rank, xtensor_model_parallel_size)
+                    group = torch.distributed.new_group(ranks)
+                    if rank in ranks:
+                        _CONTEXT_PARALLEL_GROUP = group
+                        _CONTEXT_PARALLEL_GLOBAL_RANKS = ranks
+    
+    # for i in range(max(pipeline_model_parallel_size, xpipeline_model_parallel_size)):
+    #     for j in range(max(data_parallel_size, xdata_parallel_size)):
+    #         start_rank = (
+    #             i * num_pipeline_model_parallel_groups
+    #             + j * real_tensor_model_parallel_size * context_parallel_size
+    #             + offset
+    #         )
+    #         end_rank = (
+    #             i * num_pipeline_model_parallel_groups
+    #             + (j + 1) * real_tensor_model_parallel_size * context_parallel_size
+    #             + offset
+    #         )
+    #         for k in range(max(tensor_model_parallel_size, xtensor_model_parallel_size)):
+               
+    #             if k < real_tensor_model_parallel_size and j < real_data_parallel_size and i < real_pipeline_model_parallel_size:
+    #                 ranks = range(start_rank + k, end_rank, real_tensor_model_parallel_size)
+    #             # print_rank_0(f"CP group: {ranks}")
+    #             group = torch.distributed.new_group(ranks)
+                
+    #             if rank in ranks:
+    #                 _CONTEXT_PARALLEL_GROUP = group
+    #                 _CONTEXT_PARALLEL_GLOBAL_RANKS = ranks
+    
+        
     torch.distributed.barrier()
 
     # Build the model-parallel groups.
     global _MODEL_PARALLEL_GROUP
     assert _MODEL_PARALLEL_GROUP is None, 'model parallel group is already initialized'
-    # print_rank_0(all_data_parallel_group_ranks_with_cp)
-    for i in range(max(data_parallel_size * context_parallel_size, xdata_parallel_size * context_parallel_size)):
-        if i < real_data_parallel_size * context_parallel_size:
-            ranks = [
-                data_parallel_group_ranks_with_cp[i]
-                for data_parallel_group_ranks_with_cp in all_data_parallel_group_ranks_with_cp
-            ]
-            # print_rank_0(f"Model parallel group: {ranks}")
-        group = torch.distributed.new_group(ranks)   
+    for i in range(data_parallel_size * context_parallel_size):
+        ranks = [
+            data_parallel_group_ranks_with_cp[i]
+            for data_parallel_group_ranks_with_cp in all_data_parallel_group_ranks_with_cp
+        ]
+        print_rank_0(f"MP group: {ranks}")
+        group = torch.distributed.new_group(ranks)
         if rank in ranks:
             _MODEL_PARALLEL_GROUP = group
+    if is_multi_branch:
+        for i in range(xdata_parallel_size * context_parallel_size):
+            ranks = [
+                data_parallel_group_ranks_with_cp[i]
+                for data_parallel_group_ranks_with_cp in all_xdata_parallel_group_ranks_with_cp
+            ]
+            print_rank_0(f"extra MP group: {ranks}")
+            group = torch.distributed.new_group(ranks)
+            if rank in ranks:
+                _MODEL_PARALLEL_GROUP = group
+
+    # for i in range(max(data_parallel_size * context_parallel_size, xdata_parallel_size * context_parallel_size)):
+    #     if i < real_data_parallel_size * context_parallel_size:
+    #         ranks = [
+    #             data_parallel_group_ranks_with_cp[i]
+    #             for data_parallel_group_ranks_with_cp in all_data_parallel_group_ranks_with_cp
+    #         ]
+    #         print_rank_0(f"Model parallel group: {ranks}")
+    #     group = torch.distributed.new_group(ranks)   
+    #     if rank in ranks:
+    #         _MODEL_PARALLEL_GROUP = group
 
     print_rank_0("========================================================")
 
@@ -482,7 +540,7 @@ def initialize_model_parallel(
     global _POSITION_EMBEDDING_GROUP
     global _POSITION_EMBEDDING_GLOBAL_RANKS
     assert _POSITION_EMBEDDING_GROUP is None, 'position embedding group is already initialized'
-
+    loss_rank = list() # the pipeline rank which participate loss calculating
     # ori PP group set up
     for i in range(num_pipeline_model_parallel_groups):
         ranks = range(i, ori_world_size, num_pipeline_model_parallel_groups)
@@ -490,40 +548,42 @@ def initialize_model_parallel(
         group = torch.distributed.new_group(ranks)
         # if tuple(ranks) not in _ALL_PIPELINE_MODEL_PARALLEL_GROUPS:
         #     _ALL_PIPELINE_MODEL_PARALLEL_GROUPS[tuple(ranks)] = group
-        
+        loss_rank.append(list(ranks)[-1])
         if rank in ranks:
             _PIPELINE_MODEL_PARALLEL_GROUP = group
             _PIPELINE_GLOBAL_RANKS = ranks
-       
+        # Vision branch doesn't needs embedding.
+        _EMBEDDING_GLOBAL_RANKS = []
+        _POSITION_EMBEDDING_GLOBAL_RANKS = []
         # Setup embedding group (to exchange gradients between
         # first and last stages).
-        if len(ranks) > 1:
-            embedding_ranks = [ranks[0], ranks[-1]]
-            position_embedding_ranks = [ranks[0]]
-            if pipeline_model_parallel_split_rank is not None:
-                if ranks[pipeline_model_parallel_split_rank] not in embedding_ranks:
-                    embedding_ranks = [
-                        ranks[0],
-                        ranks[pipeline_model_parallel_split_rank],
-                        ranks[-1],
-                    ]
-                if ranks[pipeline_model_parallel_split_rank] not in position_embedding_ranks:
-                    position_embedding_ranks = [ranks[0], ranks[pipeline_model_parallel_split_rank]]
-        else:
-            embedding_ranks = ranks
-            position_embedding_ranks = ranks
+        # if len(ranks) > 1:
+        #     embedding_ranks = [ranks[0], ranks[-1]]
+        #     position_embedding_ranks = [ranks[0]]
+        #     if pipeline_model_parallel_split_rank is not None:
+        #         if ranks[pipeline_model_parallel_split_rank] not in embedding_ranks:
+        #             embedding_ranks = [
+        #                 ranks[0],
+        #                 ranks[pipeline_model_parallel_split_rank],
+        #                 ranks[-1],
+        #             ]
+        #         if ranks[pipeline_model_parallel_split_rank] not in position_embedding_ranks:
+        #             position_embedding_ranks = [ranks[0], ranks[pipeline_model_parallel_split_rank]]
+        # else:
+        #     embedding_ranks = ranks
+        #     position_embedding_ranks = ranks
 
-        group = torch.distributed.new_group(embedding_ranks)
-        if rank in embedding_ranks:
-            _EMBEDDING_GROUP = group
-        if rank in ranks:
-            _EMBEDDING_GLOBAL_RANKS = embedding_ranks
+        # group = torch.distributed.new_group(embedding_ranks)
+        # if rank in embedding_ranks:
+        #     _EMBEDDING_GROUP = group
+        # if rank in ranks:
+        #     _EMBEDDING_GLOBAL_RANKS = embedding_ranks
 
-        group = torch.distributed.new_group(position_embedding_ranks)
-        if rank in position_embedding_ranks:
-            _POSITION_EMBEDDING_GROUP = group
-        if rank in ranks:
-            _POSITION_EMBEDDING_GLOBAL_RANKS = position_embedding_ranks
+        # group = torch.distributed.new_group(position_embedding_ranks)
+        # if rank in position_embedding_ranks:
+        #     _POSITION_EMBEDDING_GROUP = group
+        # if rank in ranks:
+        #     _POSITION_EMBEDDING_GLOBAL_RANKS = position_embedding_ranks
 
     # extra PP group set up
     if is_multi_branch:
@@ -533,11 +593,12 @@ def initialize_model_parallel(
             group = torch.distributed.new_group(ranks)
             # if tuple(ranks) not in _ALL_PIPELINE_MODEL_PARALLEL_GROUPS:
             #     _ALL_PIPELINE_MODEL_PARALLEL_GROUPS[tuple(ranks)] = group
-            
+            loss_rank.append(list(ranks)[-1])
             if rank in ranks:
                 _PIPELINE_MODEL_PARALLEL_GROUP = group
                 _PIPELINE_GLOBAL_RANKS = ranks
         
+            # Only language models need embedding group to sync grads.
             # Setup embedding group (to exchange gradients between
             # first and last stages).
             if len(ranks) > 1:
@@ -565,9 +626,14 @@ def initialize_model_parallel(
             group = torch.distributed.new_group(position_embedding_ranks)
             if rank in position_embedding_ranks:
                 _POSITION_EMBEDDING_GROUP = group
-            if rank in ranks:
+            if rank in position_embedding_ranks:
                 _POSITION_EMBEDDING_GLOBAL_RANKS = position_embedding_ranks
-
+    print(f"rank={rank}, _POSITION_EMBEDDING_GLOBAL_RANKS={_POSITION_EMBEDDING_GLOBAL_RANKS}, _EMBEDDING_GLOBAL_RANKS={_EMBEDDING_GLOBAL_RANKS}", flush=True)
+    global _CONTRASTIVE_LOSS_GROUP
+    global _CONTRASTIVE_LOSS_RANK
+    _CONTRASTIVE_LOSS_GROUP = torch.distributed.new_group(loss_rank)
+    _CONTRASTIVE_LOSS_RANK = loss_rank
+    print_rank_0(f"create loss group: {loss_rank}")
     print_rank_0("========================================================")
 
     # Build the tensor + data parallel groups.
@@ -1039,6 +1105,15 @@ def is_rank_in_position_embedding_group():
     rank = torch.distributed.get_rank()
     global _POSITION_EMBEDDING_GLOBAL_RANKS
     return rank in _POSITION_EMBEDDING_GLOBAL_RANKS
+
+
+def get_pipeline_model_parallel_loss_group():
+    assert _CONTRASTIVE_LOSS_GROUP is not None, "Contrastive loss group is not initialized"
+    return _CONTRASTIVE_LOSS_GROUP
+
+def get_pipeline_model_parallel_loss_rank():
+    assert _CONTRASTIVE_LOSS_RANK is not None, "Contrastive loss rank is not initialized"
+    return _CONTRASTIVE_LOSS_RANK
 
 
 def is_pipeline_stage_before_split(rank=None):

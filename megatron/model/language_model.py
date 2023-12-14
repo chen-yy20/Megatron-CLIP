@@ -505,7 +505,11 @@ class TransformerLanguageModel(MegatronModule):
                 # encoder_output [s, b, h]
                 pooled_output = self.pooler(encoder_output,
                                             pooling_sequence_index)
-
+        
+        # def hook(gard):
+        #     print(f"grad hook:[language_model.encoder_out]: {gard}", flush=True)
+        #     return gard
+        # encoder_output.register_hook(hook)
         # output_enc_hidden refers to when we just need the encoder's
         # output. For example, it is helpful to compute
         # similarity between two sequences by average pooling

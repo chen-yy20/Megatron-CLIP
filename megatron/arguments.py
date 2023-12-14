@@ -93,6 +93,8 @@ def validate_args(args, defaults={}):
         'size ({})'.format(args.world_size, args.tensor_model_parallel_size,
                            args.pipeline_model_parallel_size)
     args.data_parallel_size = args.world_size // model_parallel_size # 不用设定，因为可以算出来
+    args.xdata_parallel_size = args.extra_world_size // \
+        (args.xpipeline_model_parallel_size * args.xtensor_model_parallel_size)
     if args.rank == 0:
         print('using world size: {}, data-parallel-size: {}, '
               'tensor-model-parallel size: {}, '
@@ -247,7 +249,7 @@ def validate_args(args, defaults={}):
     if args.v_num_layers is not None:
         assert args.v_encoder_num_layers is None, \
             'cannot have both v-num-layers and v-encoder-num-layers specified'
-        args.v_encoder_num_layers = args.num_layers
+        args.v_encoder_num_layers = args.v_num_layers
     else:
         assert args.v_encoder_num_layers is not None, \
             'either v-num-layers or v-encoder-num-layers should be specified'
@@ -449,7 +451,7 @@ def core_transformer_config_from_args(args):
     kw_args['persist_layer_norm'] = not args.no_persist_layer_norm
     kw_args['layernorm_zero_centered_gamma'] = args.apply_layernorm_1p
     kw_args['layernorm_epsilon'] = args.norm_epsilon
-    kw_args['deallocate_pipeline_outputs'] = True
+    kw_args['deallocate_pipeline_outputs'] = False
     kw_args['pipeline_dtype'] = args.params_dtype
     kw_args['batch_p2p_comm'] = not args.overlap_p2p_comm
     kw_args['num_moe_experts'] = args.num_experts
@@ -476,7 +478,7 @@ def vision_transformer_config_from_args(args):
     kw_args['persist_layer_norm'] = not args.no_persist_layer_norm
     kw_args['layernorm_zero_centered_gamma'] = args.apply_layernorm_1p
     kw_args['layernorm_epsilon'] = args.norm_epsilon
-    kw_args['deallocate_pipeline_outputs'] = True
+    kw_args['deallocate_pipeline_outputs'] = False
     kw_args['pipeline_dtype'] = args.params_dtype
     kw_args['batch_p2p_comm'] = not args.overlap_p2p_comm
     kw_args['num_moe_experts'] = args.num_experts
@@ -514,7 +516,7 @@ def clip_vision_transformer_config_from_args(args):
     kw_args['persist_layer_norm'] = not args.no_persist_layer_norm
     kw_args['layernorm_zero_centered_gamma'] = args.apply_layernorm_1p
     kw_args['layernorm_epsilon'] = args.norm_epsilon
-    kw_args['deallocate_pipeline_outputs'] = True
+    kw_args['deallocate_pipeline_outputs'] = False
     kw_args['pipeline_dtype'] = args.params_dtype
     kw_args['batch_p2p_comm'] = not args.overlap_p2p_comm
     kw_args['num_moe_experts'] = args.num_experts
@@ -1370,7 +1372,9 @@ def _add_vision_args(parser):
     group.add_argument('--v-encoder-num-layers', type=int, default=None,
                        help='Number of encoder layers in CLIP Transformer')
     group.add_argument('--v-hidden-size', type=int, default=768,
-                          help='Hidden dimension size in CLIP Transformer')
+                       help='Hidden dimension size in CLIP Transformer')
+    group.add_argument('--v-seq-length', type=int, default=264,
+                       help='The sequence length of vision Transformer for CLIP.')
     group.add_argument('--v-ffn-hidden-size', type=int, default=4*768,
                           help='Transformer Feed-Forward Network hidden size. \
                                 This is set to 4*hidden_size if not provided. Defaults to None.')

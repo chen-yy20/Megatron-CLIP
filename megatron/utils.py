@@ -227,16 +227,17 @@ def print_rank_0(message):
     else:
         print(message, flush=True)
 
-def print_rank_all(message):
+def print_rank_all(message, barrier=True):
     """If distributed is initialized, print only on rank 0."""
     rank = 0
     if torch.distributed.is_initialized():
         rank = torch.distributed.get_rank()
         print(f"--Rank {rank}: {message}", flush=True)
-        torch.distributed.barrier()
+        if barrier:
+            torch.distributed.barrier()
     else:
         print(message, flush= True)
-    if rank == 0:
+    if rank == 0 and barrier:
         print("===============================", flush=True)
     
 

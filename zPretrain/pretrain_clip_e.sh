@@ -13,12 +13,12 @@ source ~/workspace/mega-env/bin/activate
 # source /opt/spack/share/spack/setup-env.sh;spack load cuda@11.8.0;spack load gcc@10.2.0;spack load nccl@2.10.3
 cd /home/zanzong/workspace/Megatron-CLIP
 
-export GLOBAL_BATCH_SIZE=256
-export MICRO_BATCHES=4
-export TENSOR_MODEL_PARALLEL=2
+export GLOBAL_BATCH_SIZE=1008
+export MICRO_BATCHES=12
+export TENSOR_MODEL_PARALLEL=1
 export PIPELINE_MODEL_PARALLEL=1
-export EXTRA_WORLD_SIZE=8
-export XTENSOR_MODEL_PARALLEL=2
+export EXTRA_WORLD_SIZE=4
+export XTENSOR_MODEL_PARALLEL=1
 export XPIPELINE_MODEL_PARALLEL=1
 
 DATA_PARALLEL_SIZE=$(expr $(($WORLD_SIZE-$EXTRA_WORLD_SIZE)) / $(($TENSOR_MODEL_PARALLEL*PIPELINE_MODEL_PARALLEL)))
@@ -44,10 +44,11 @@ exec python -W ignore \
 	--v-num-layers 56 \
         --v-hidden-size 1792 \
         --v-num-attention-heads 8 \
+        --v-seq-length 264 \
         --num-layers 36 \
 	--hidden-size 1280 \
         --num-attention-heads 20 \
-        --seq-length 1024 \
+        --seq-length 77 \
         --max-position-embeddings 1024 \
         --train-samples $TRAIN_SAMPLES \
 	--lr-decay-samples 4882800 \
@@ -58,12 +59,11 @@ exec python -W ignore \
         --eval-iters 0 \
         --data-path ${DATA_PATH} \
         --split 100,0,0 \
-        --clip-grad 1.0 \
+        --clip-grad 0.0 \
         --weight-decay 0.01 \
         --adam-beta1 0.9 \
         --adam-beta2 0.95 \
         --init-method-std 0.002 \
-        --fp16 \
         --tokenizer-type CLIPTokenizer \
         --img-h 256 \
         --img-w 256 \

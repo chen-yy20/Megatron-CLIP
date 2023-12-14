@@ -319,12 +319,15 @@ class MixedPrecisionOptimizer(MegatronOptimizer):
             # If we found inf/nan, skip the update.
             if found_inf_flag:
                 print_rank_all(f"Rank={torch.distributed.get_rank()}, " + \
-                    "in optimzier.step(): found_inf_flag={found_inf_flag}")
+                    f"in optimzier.step(): found_inf_flag={found_inf_flag}")
                 return False, None, None
 
         # Clip the main gradients.
         timers('optimizer-clip-main-grad', log_level=1).start(
             barrier=args.barrier_with_L1_time)
+        
+        # FIXME: If use clip_gard, the grad_norm all_reduce will stuck the process.
+        #        A workaround is set clip grad to 0 currently.
         grad_norm = None
         if self.clip_grad > 0.0:
             grad_norm = self.clip_grad_norm(self.clip_grad,

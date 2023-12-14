@@ -6,6 +6,9 @@ from typing import Callable, Iterator, List, Optional, Union
 import torch
 from torch.autograd.variable import Variable
 
+from megatron import get_args
+from megatron import print_rank_0, print_rank_all
+from megatron import get_timers
 from megatron.core import parallel_state
 from megatron.core.enums import ModelType
 from megatron.core.pipeline_parallel import p2p_communication
@@ -1056,7 +1059,7 @@ def forward_backward_pipelining_without_interleaving(
     stages.
 
     Returns dictionary with losses if the last stage, empty dict otherwise."""
-
+    args = get_args()
     if isinstance(model, list):
         assert (
             len(model) == 1
@@ -1098,8 +1101,7 @@ def forward_backward_pipelining_without_interleaving(
             no_sync_context = None
 
     disable_grad_sync()
-
-    # Compute number of warmup microbatches. 不预热的话性能会下降？
+    # Compute number of warmup microbatches.
     num_warmup_microbatches = (
         parallel_state.get_pipeline_model_parallel_world_size()
         - parallel_state.get_pipeline_model_parallel_rank()
@@ -1107,6 +1109,8 @@ def forward_backward_pipelining_without_interleaving(
     )
     num_warmup_microbatches = min(num_warmup_microbatches, num_microbatches)
     num_microbatches_remaining = num_microbatches - num_warmup_microbatches
+    print(f"rank={torch.distributed.get_rank()}, total microbatches={num_microbatches}, " + \
+                    f"num warmup batches={num_warmup_microbatches}", flush=True)
 
     # Checkpoint the activations of partial Transformer layers in a number of micro-batches
     # within the maximum outstanding micro-batch backpropagations.
@@ -1123,11 +1127,13 @@ def forward_backward_pipelining_without_interleaving(
     model_type = get_model_type(model)
 
     rank = parallel_state.get_pipeline_model_parallel_rank()
+    self_micro_batch_size = args.xmicro_batch_size \
+        if parallel_state.is_extra_branch_rank() else args.micro_batch_size
     recv_tensor_shapes = get_tensor_shapes(
         rank=rank - 1,
         model_type=model_type,
         seq_length=seq_length,
-        micro_batch_size=micro_batch_size,
+        micro_batch_size=self_micro_batch_size,
         decoder_seq_length=decoder_seq_length,
         config=config,
     ) 
@@ -1135,7 +1141,7 @@ def forward_backward_pipelining_without_interleaving(
         rank=rank,
         model_type=model_type,
         seq_length=seq_length,
-        micro_batch_size=micro_batch_size,
+        micro_batch_size=self_micro_batch_size,
         decoder_seq_length=decoder_seq_length,
         config=config,
     )

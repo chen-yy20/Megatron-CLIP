@@ -368,7 +368,9 @@ class CLIP_VitBackbone(MegatronModule):
 
     def set_input_tensor(self, input_tensor):
         """See megatron.model.transformer.set_input_tensor()"""
-        self.transformer.set_input_tensor(input_tensor)
+        if not isinstance(input_tensor, list):
+            input_tensor = [input_tensor]
+        self.transformer.set_input_tensor(input_tensor[0])
 
     def _global_pool(self, x: torch.Tensor):
         if self.global_average_pool:
@@ -391,9 +393,9 @@ class CLIP_VitBackbone(MegatronModule):
                 p1=self.patch_dim,
                 p2=self.patch_dim,
             )
-            rearranged_input = rearranged_input.to(torch.half)
+            # rearranged_input = rearranged_input.to(torch.half)
             
-            assert rearranged_input.dtype == torch.half
+            # assert rearranged_input.dtype == torch.half
             encoder_output = self.linear_encoder(rearranged_input)
             if self.class_token:
                 cls_tokens = self.cls_token.expand(encoder_output.shape[0], -1, -1)
@@ -411,9 +413,7 @@ class CLIP_VitBackbone(MegatronModule):
             hidden_states = self.embedding_dropout(token_embeddings)
         else:
             hidden_states = input
-
-        hidden_states = self.transformer(hidden_states, None)
-
+        hidden_states = self.transformer(hidden_states=hidden_states, attention_mask=None)
         if self.post_process:
             # [s b h] => [b s h]
             hidden_states = hidden_states.transpose(0, 1).contiguous()
@@ -426,6 +426,10 @@ class CLIP_VitBackbone(MegatronModule):
                 pooled = self.layer_norm(pooled)
             if self.proj is not None:
                 pooled = pooled @ self.proj
+            # def hook(gard):
+            #     print(f"grad hook:[vit_backbone.proj]: {gard}", flush=True)
+            #     return gard
+            # self.proj.register_hook(hook)
             
             if self.output_tokens:
                 return pooled, tokens

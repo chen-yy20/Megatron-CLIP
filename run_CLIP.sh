@@ -22,7 +22,7 @@ export MODEL_NAME='CLIP'
 export GPUS_PER_NODE='8'
 # export NNODES=$(( $DATA_PARALLEL_SIZE * $TENSOR_PARALLEL_SIZE * $PIPELINE_PARALLEL_SIZE / $GPUS_PER_NODE))
 export NNODES='2'
-export NODELIST='nico[3-4]'
+export NODELIST='nico[1-2]'
 
 # export GLOBAL_BATCH_SIZE='64'
 # export MICRO_BATCH_SIZE='4'
@@ -43,7 +43,7 @@ NNODES=$(scontrol show hostnames ${NODELIST} | wc -l)
 
 srun \
     --exclusive=user \
-    -p V100 \
+    -p Big \
     -K \
 	-N $NNODES \
     -w $NODELIST \

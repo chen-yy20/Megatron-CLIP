@@ -1140,7 +1140,8 @@ class ParallelTransformerLayer(MegatronModule):
                 inference_params=None,
                 rotary_pos_emb=None):
         # hidden_states: [s, b, h]
-
+        # print(f"rank={torch.distributed.get_rank()}, parallel tranformer layer's input:{hidden_states.shape}", flush=True)
+        # hidden_states.register_hook(lambda grad: print(f"transformer hidden state grad hook: {grad}", flush=True))
         # Layer norm at the beginning of the transformer layer.
         norm_output = self.input_norm(hidden_states)
 
@@ -1335,7 +1336,7 @@ def _get_num_layers(args, model_type, is_decoder=False):
                     if args.standalone_embedding_stage
                     and mpu.get_pipeline_model_parallel_rank() == 0 else
                     # 我们主要走这一条
-                    args.num_layers // args.transformer_xpipeline_model_parallel_size
+                    round(args.num_layers / args.transformer_xpipeline_model_parallel_size)
                 )
             else:
                 assert args.v_num_layers % args.transformer_pipeline_model_parallel_size == 0, \
@@ -1348,7 +1349,7 @@ def _get_num_layers(args, model_type, is_decoder=False):
                     if args.standalone_embedding_stage
                     and mpu.get_pipeline_model_parallel_rank() == 0 else
                     # 我们主要走这一条
-                    args.v_num_layers // args.transformer_pipeline_model_parallel_size
+                    round(args.v_num_layers / args.transformer_pipeline_model_parallel_size)
                 )
                 
                 
@@ -1485,6 +1486,9 @@ class ParallelTransformer(MegatronModule):
         # 只有流水线并行需要在乎模型的层数
         self.num_layers = _get_num_layers(args, model_type,
                                           layer_type==LayerType.decoder)
+        # self_pp = args.transformer_xpipeline_model_parallel_size if is_extra_branch_rank() else args.transformer_pipeline_model_parallel_size
+        # config.num_layers = self.num_layers * self_pp
+        # print(f"rank={torch.distributed.get_rank()}, build models with layer number={self.num_layers}", flush=True)
     
         # 不同层丢弃神经元连接的概率，以列表方式储存，一般靠近输入droppath小，靠近输出droppath大
         self.drop_path_rates = [
@@ -1743,11 +1747,11 @@ class ParallelTransformer(MegatronModule):
         #   likely redundant, since p2p_communication.py (likely originator)
         #   already creates viewless tensors. That said, make_viewless_tensor()
         #   is called here to be future-proof and corner-case-proof.
-        hidden_states = core.utils.make_viewless_tensor(
-            hidden_states,
-            requires_grad=True,
-            keep_graph=True,
-        )
+        # hidden_states = core.utils.make_viewless_tensor(
+        #     hidden_states,
+        #     requires_grad=True,
+        #     keep_graph=True,
+        # )
 
         # RNG context.
         if self.sequence_parallel:
@@ -1811,6 +1815,8 @@ class ParallelTransformer(MegatronModule):
                             assert len(hidden_states) == 2
                             hidden_states, retriever_output = hidden_states
                             forward_kwargs["retriever_output"] = retriever_output
+                            
+                    # print(f"rank={torch.distributed.get_rank()}, last transformer layer output shape={hidden_states.shape}")
 
                 # Skip counter update for eval and activation checkpointing
                 if torch.is_grad_enabled() and self.training:
@@ -1819,6 +1825,7 @@ class ParallelTransformer(MegatronModule):
         # Final layer norm.
         if self.post_process and self.post_norm:
             hidden_states = self.final_norm(hidden_states)
+            # print(f"rank={torch.distributed.get_rank()}, post_process output shape={hidden_states.shape}")
 
         return hidden_states
 

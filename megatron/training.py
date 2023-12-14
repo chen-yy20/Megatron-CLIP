@@ -427,12 +427,14 @@ def train_step(forward_step_func, data_iterator,
     forward_backward_func = get_forward_backward_func()
     self_micro_batch_size = args.xmicro_batch_size if mpu.is_extra_branch_rank() else \
                                 args.micro_batch_size
+    self_seq_length = args.seq_length if mpu.is_extra_branch_rank() else \
+                                args.v_seq_length
     losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=data_iterator,
             model=model,
             num_microbatches=get_num_microbatches(),
-            seq_length=args.seq_length,
+            seq_length=self_seq_length,
             micro_batch_size=self_micro_batch_size,
             decoder_seq_length=args.decoder_seq_length,
             forward_only=False)
@@ -660,6 +662,8 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
             args.consumed_train_samples)
         log_string += ' elapsed time per iteration (ms): {:.1f} |'.format(
             elapsed_time_per_iteration * 1000.0)
+        log_string += ' training throughput (sample/s): {:.2f} |'.format(
+            batch_size / elapsed_time_per_iteration)
         log_string += ' learning rate: {:.3E} |'.format(learning_rate)
         log_string += ' global batch size: {:5d} |'.format(batch_size)
         for key in total_loss_dict:
@@ -765,7 +769,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
 
             update_num_microbatches(args.consumed_train_samples)
             args.curr_iteration = iteration
-            print_rank_all("Begin train step.")
+            # print_rank_all("Begin train step.")
             loss_dict, skipped_iter, grad_norm, num_zeros_in_grad = \
                 train_step(forward_step_func,
                         train_data_iterator,
