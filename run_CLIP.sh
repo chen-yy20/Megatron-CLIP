@@ -21,8 +21,8 @@ export MODEL_NAME='CLIP'
 # export DATA_PARALLEL_SIZE='2'
 export GPUS_PER_NODE='8'
 # export NNODES=$(( $DATA_PARALLEL_SIZE * $TENSOR_PARALLEL_SIZE * $PIPELINE_PARALLEL_SIZE / $GPUS_PER_NODE))
-export NNODES='4'
-export NODELIST='nico[1-4]'
+export NNODES='2'
+export NODELIST='nico[2,4]'
 
 # export GLOBAL_BATCH_SIZE='64'
 # export MICRO_BATCH_SIZE='4'
