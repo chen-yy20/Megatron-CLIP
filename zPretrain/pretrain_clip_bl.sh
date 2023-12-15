@@ -11,7 +11,7 @@ DATETIME=`date +'date_%y-%m-%d_time_%H-%M-%S'`
 
 source ~/workspace/mega-env/bin/activate
 # source /opt/spack/share/spack/setup-env.sh;spack load cuda@11.8.0;spack load gcc@10.2.0;spack load nccl@2.10.3
-cd /home/zanzong/workspace/Megatron-CLIP
+cd /home/chen-yy20/Megatron-LM
 
 # only allow to use DP for CLIP baseline
 export GLOBAL_BATCH_SIZE=1024
