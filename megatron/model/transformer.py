@@ -1291,6 +1291,40 @@ class NoopTransformerLayer(MegatronModule):
         return hidden_states.clone()
 
 
+def _determine_layer_num(args):
+    """For the number of layers which cannot be divisible by the pipeline size, 
+    we balance the layers to the first and last stages. Return a tuple:
+    (self_stage_layer_num, self_stage_offset).
+    """
+    assert has_extra_branch()
+    local_pipeline_rank = mpu.get_pipeline_model_parallel_rank()
+    total_layer = args.num_layers if is_extra_branch_rank() else args.v_num_layers
+    pipeline_parallel_size = args.transformer_xpipeline_model_parallel_size \
+        if is_extra_branch_rank() else args.transformer_pipeline_model_parallel_size
+    uniform_layer_num = round(total_layer / pipeline_parallel_size)
+    uniform_total_layer = uniform_layer_num * pipeline_parallel_size
+    if uniform_total_layer == total_layer:
+        return uniform_layer_num, local_pipeline_rank * uniform_layer_num
+    # We use smaller stage as the first stage due to memory pressure.
+    local_stage_layer_num = None
+    if uniform_total_layer > total_layer:
+        first_stage_layer_num = uniform_layer_num - (uniform_total_layer - total_layer)
+        if local_pipeline_rank == 0:
+            offset = 0
+            local_stage_layer_num = first_stage_layer_num
+        else:
+            offset = first_stage_layer_num + (local_pipeline_rank - 1) * uniform_layer_num
+            local_stage_layer_num = uniform_layer_num
+    else:
+        last_stage_layer_num  = uniform_layer_num + (total_layer - uniform_total_layer)
+        offset = local_pipeline_rank * uniform_layer_num
+        if local_pipeline_rank == mpu.get_pipeline_model_parallel_world_size() - 1:
+            local_stage_layer_num = last_stage_layer_num
+        else:
+            local_stage_layer_num = uniform_layer_num
+    return local_stage_layer_num, offset
+
+
 def _get_num_layers(args, model_type, is_decoder=False):
     """Compute the number of transformer layers resident on the current rank."""
     is_encoder_and_decoder_model = (model_type == ModelType.encoder_and_decoder)
@@ -1325,34 +1359,11 @@ def _get_num_layers(args, model_type, is_decoder=False):
             else:
                 num_layers = args.decoder_num_layers // num_ranks_in_decoder
         elif has_extra_branch():
-            if is_extra_branch_rank():
-                assert args.num_layers % args.transformer_xpipeline_model_parallel_size == 0, \
-                    'num_layers must be divisible by transformer_xpipeline_model_parallel_size'
-                assert args.num_layers == args.encoder_num_layers
-                if args.standalone_embedding_stage and mpu.get_pipeline_model_parallel_rank() == 0:
-                    num_layers = 0
-                num_layers = (
-                    0
-                    if args.standalone_embedding_stage
-                    and mpu.get_pipeline_model_parallel_rank() == 0 else
-                    # 我们主要走这一条
-                    round(args.num_layers / args.transformer_xpipeline_model_parallel_size)
-                )
+            if args.standalone_embedding_stage and mpu.get_pipeline_model_parallel_rank() == 0:
+                num_layers = 0
             else:
-                assert args.v_num_layers % args.transformer_pipeline_model_parallel_size == 0, \
-                    'num_layers must be divisible by transformer_xpipeline_model_parallel_size'
-                assert args.v_num_layers == args.v_encoder_num_layers
-                if args.standalone_embedding_stage and mpu.get_pipeline_model_parallel_rank() == 0:
-                    num_layers = 0
-                num_layers = (
-                    0
-                    if args.standalone_embedding_stage
-                    and mpu.get_pipeline_model_parallel_rank() == 0 else
-                    # 我们主要走这一条
-                    round(args.v_num_layers / args.transformer_pipeline_model_parallel_size)
-                )
-                
-                
+                num_layers, offset = _determine_layer_num(args)
+                return (num_layers, offset)
         else:
             assert args.num_layers == args.encoder_num_layers
             assert args.num_layers % args.transformer_pipeline_model_parallel_size == 0, \
@@ -1368,7 +1379,6 @@ def _get_num_layers(args, model_type, is_decoder=False):
                 0
                 if args.standalone_embedding_stage
                 and mpu.get_pipeline_model_parallel_rank() == 0 else
-                # 我们主要走这一条
                 args.num_layers // args.transformer_pipeline_model_parallel_size
             )
     # 没有流水线并行
@@ -1484,11 +1494,14 @@ class ParallelTransformer(MegatronModule):
 
         # Number of layers.
         # 只有流水线并行需要在乎模型的层数
-        self.num_layers = _get_num_layers(args, model_type,
+        layers = _get_num_layers(args, model_type,
                                           layer_type==LayerType.decoder)
-        # self_pp = args.transformer_xpipeline_model_parallel_size if is_extra_branch_rank() else args.transformer_pipeline_model_parallel_size
-        # config.num_layers = self.num_layers * self_pp
-        # print(f"rank={torch.distributed.get_rank()}, build models with layer number={self.num_layers}", flush=True)
+        imbalance_offset = None
+        if isinstance(layers, tuple):
+            self.num_layers, imbalance_offset = layers
+            print(f"\nRank={torch.distributed.get_rank()}: get {self.num_layers} layers for stage {mpu.get_pipeline_model_parallel_rank()}, offset={imbalance_offset}", flush=True)
+        else:
+            self.num_layers = layers
     
         # 不同层丢弃神经元连接的概率，以列表方式储存，一般靠近输入droppath小，靠近输出droppath大
         self.drop_path_rates = [
@@ -1563,6 +1576,8 @@ class ParallelTransformer(MegatronModule):
                 'num_layers_per_stage must be divisible by ' \
                 'virtual_pipeline_model_parallel_size'
             assert args.model_type != ModelType.encoder_and_decoder
+            assert args.num_layers % args.transformer_pipeline_model_parallel_size == 0, \
+                'Virtual pipeline has not adapted with _determine_layer_num().'
             # Number of layers in each model chunk is the number of layers in the stage,
             # divided by the number of model chunks in a stage.
             self.num_layers = self.num_layers // config.virtual_pipeline_model_parallel_size
@@ -1578,18 +1593,21 @@ class ParallelTransformer(MegatronModule):
                 config.num_layers // config.virtual_pipeline_model_parallel_size) + \
                 (mpu.get_pipeline_model_parallel_rank() * self.num_layers)
         else:
-            # Each stage gets a contiguous set of layers.
-            if args.model_type == ModelType.encoder_and_decoder and \
-                    mpu.get_pipeline_model_parallel_world_size() > 1:
-                pipeline_rank = mpu.get_pipeline_model_parallel_rank()
-                if layer_type == LayerType.encoder:
-                    offset = pipeline_rank * self.num_layers
-                else:
-                    num_ranks_in_enc = args.pipeline_model_parallel_split_rank
-                    # 解码器的偏移需要先减去编码器的进程数再做计算，num_layers是切分后的层数
-                    offset = (pipeline_rank - num_ranks_in_enc) * self.num_layers
+            if imbalance_offset is not None:
+                offset = imbalance_offset
             else:
-                offset = mpu.get_pipeline_model_parallel_rank() * self.num_layers
+                # Each stage gets a contiguous set of layers.
+                if args.model_type == ModelType.encoder_and_decoder and \
+                        mpu.get_pipeline_model_parallel_world_size() > 1:
+                    pipeline_rank = mpu.get_pipeline_model_parallel_rank()
+                    if layer_type == LayerType.encoder:
+                        offset = pipeline_rank * self.num_layers
+                    else:
+                        num_ranks_in_enc = args.pipeline_model_parallel_split_rank
+                        # 解码器的偏移需要先减去编码器的进程数再做计算，num_layers是切分后的层数
+                        offset = (pipeline_rank - num_ranks_in_enc) * self.num_layers
+                else:
+                    offset = mpu.get_pipeline_model_parallel_rank() * self.num_layers
 
         if self.num_layers == 0:
             # When a standalone embedding stage is used (e.g.,
