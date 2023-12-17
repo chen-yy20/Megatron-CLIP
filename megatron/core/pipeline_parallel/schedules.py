@@ -1178,6 +1178,7 @@ def forward_backward_pipelining_without_interleaving(
             checkpoint_activations_microbatch,
         )
         send_forward(output_tensor, send_tensor_shapes, config)
+        # print_rank_all(f"send a tensor, shape={output_tensor[0].shape}", False)
 
         if not forward_only:
             input_tensors.append(input_tensor)
@@ -1188,6 +1189,7 @@ def forward_backward_pipelining_without_interleaving(
     # If all microbatches are run in warmup / cooldown phase, then no need to
     # receive this tensor here.
     if num_microbatches_remaining > 0:
+        # print_rank_all(f"call recv forward, expect shape={recv_tensor_shapes}", False)
         input_tensor = recv_forward(recv_tensor_shapes, config)
 
     # Run 1F1B in steady state.

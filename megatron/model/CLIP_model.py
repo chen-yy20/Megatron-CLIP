@@ -182,8 +182,6 @@ class CLIPTextModel(MegatronModule):
             extended_attention_mask,
             tokentype_ids=None,
         )
-        # lm_ouput = lm_ouput[0]
-
 
         if self.post_process:
             output, pooled_output = lm_output
@@ -194,8 +192,6 @@ class CLIPTextModel(MegatronModule):
             # output = output[torch.arange(output.shape[0]), text.argmax(dim=-1)]
             if self.text_projection:
                 lm_output = pooled_output @ self.projection 
-        else:
-            lm_output = lm_output[0]        
         return lm_output
 
         

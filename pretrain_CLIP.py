@@ -212,10 +212,10 @@ def loss_func(output):
     """    
     args = get_args()
     # gather特征，剔除冗余
-    print_rank_all("step into loss function", False)
+    print_rank_all(f"get output:{output.shape}", False)
     loss_ranks = parallel_state.get_pipeline_model_parallel_loss_rank()
     combine_output = gather_all_tensors(output, parallel_state.get_pipeline_model_parallel_loss_group())
-    # print_rank_all(f"gathered tensor={[t.shape for t in combine_output]}", False)
+    print_rank_all(f"gathered tensor={[t.shape for t in combine_output]}", False)
 
     image_world_size = args.world_size
     text_world_size = args.extra_world_size
@@ -225,14 +225,14 @@ def loss_func(output):
     text_dp_size = len(text_loss_ranks) // args.xtensor_model_parallel_size
     image_output = [combine_output[i] for i in range(image_dp_size)]
     text_output = [combine_output[i + len(image_loss_ranks)] for i in range(text_dp_size)]
-    # print_rank_all(f"selected image output:{list(range(image_dp_size))}", False)
-    # print_rank_all(f"selected text output:{list(range(text_dp_size))}", False)
+    print_rank_all(f"selected image output:{list(range(image_dp_size))}", False)
+    print_rank_all(f"selected text output:{list(range(text_dp_size))}", False)
     
     # 连接特征
     image_output = torch.cat(image_output, dim=0)
     text_output = torch.cat(text_output, dim=0)
 
-    # print_rank_0(f"-LOSS-  image_output: {image_output.dtype}  text_output: {text_output.dtype}")
+    print_rank_0(f"-LOSS-  image_output: {image_output.dtype}  text_output: {text_output.dtype}")
     # image_output.register_hook(lambda grad: print(f"gradient of image out tensor: {grad}", flush=True))
     text_features = text_output.contiguous()
     image_features = image_output.contiguous()
@@ -278,7 +278,7 @@ def forward_step(data_iterator, model):
     else:
         # Vit Backbone
         output_tensor = model(tokens)
-    # print_rank_all(f"Call forward_step, output shape={output_tensor.shape}, dtype={output_tensor.dtype}", False)
+    # print_rank_all(f"finish forward_step, output shape={output_tensor.shape}, dtype={output_tensor.dtype}", False)
     # def hook(gard):
     #     print(f"grad hook:[forward_step finish]: {gard}", flush=True)
     #     return gard
