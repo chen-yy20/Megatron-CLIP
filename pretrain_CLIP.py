@@ -204,7 +204,8 @@ def loss_func(output):
         return local_index
     args = get_args()
     # gather特征，剔除冗余
-    # print_rank_all(f"loss_func get output:{output.shape}, requires_grad={output.requires_grad}", False)
+    print_rank_all("step into loss function", False)
+    loss_ranks = parallel_state.get_pipeline_model_parallel_loss_rank()
     combine_output = gather_all_tensors(output, parallel_state.get_pipeline_model_parallel_loss_group())
     # print_rank_all(f"gathered tensor={[t.shape for t in combine_output]}", False)
     # print_rank_all(f"gathered tensor req. gradient={[t.requires_grad for t in combine_output]}", False)

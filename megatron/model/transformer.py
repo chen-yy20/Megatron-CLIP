@@ -1359,7 +1359,6 @@ def _get_num_layers(args, model_type, is_decoder=False, modality=None):
             else:
                 num_layers = args.decoder_num_layers // num_ranks_in_decoder
         elif has_extra_branch():
-            # For separate-modality case
             if args.standalone_embedding_stage and mpu.get_pipeline_model_parallel_rank() == 0:
                 num_layers = 0
             else:
@@ -1386,7 +1385,7 @@ def _get_num_layers(args, model_type, is_decoder=False, modality=None):
                 0
                 if args.standalone_embedding_stage
                 and mpu.get_pipeline_model_parallel_rank() == 0 else
-                total_num_layers // args.transformer_pipeline_model_parallel_size
+                args.num_layers // args.transformer_pipeline_model_parallel_size
             )
     # 没有流水线并行
     else:
