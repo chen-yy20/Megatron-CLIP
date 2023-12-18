@@ -191,7 +191,7 @@ class CLIPTextModel(MegatronModule):
             # text = text[:,1:] # begin and end is both 49408
             # output = output[torch.arange(output.shape[0]), text.argmax(dim=-1)]
             if self.text_projection:
-                lm_output = pooled_output @ self.projection 
+                lm_output = pooled_output @ self.projection
         return lm_output
 
         

@@ -126,7 +126,11 @@ class GroupAllGather(torch.autograd.Function):
             torch.empty_like(tensor) for _ in range(dist.get_world_size(group=group))
         ]
         dist.all_gather(out_tensor_list, tensor, group=group)
-        return tuple(out_tensor_list)
+        # Only tensor generated in local process has grad function,
+        # so replace the gathered one to enable backward.
+        self_rank = dist.get_rank(group=group)
+        out_tensor_list[self_rank] = tensor
+        return out_tensor_list
 
     @staticmethod
     def backward(ctx, *grad_outputs):
@@ -159,7 +163,7 @@ def gather_all_tensors(result: Tensor, group=None):
             gathered_result[i] corresponds to result tensor from process i
     """
     
-    def _simple_gather_all_tensors(result: Tensor, world_size: int, group=None):
+    def _simple_gather_all_tensors(result: Tensor, group=None):
         gathered_result = GroupAllGather.apply(group, result)
         return gathered_result
 
@@ -173,7 +177,7 @@ def gather_all_tensors(result: Tensor, group=None):
 
     # if the tensor is scalar, things are easy
     if result.ndim == 0:
-        return _simple_gather_all_tensors(result, world_size, group)
+        return _simple_gather_all_tensors(result, group)
 
     # 1. Gather sizes of all tensors
     local_size = torch.tensor(result.shape, device=result.device)
@@ -184,7 +188,7 @@ def gather_all_tensors(result: Tensor, group=None):
 
     # 2. If shapes are all the same, then do a simple gather:
     if all_sizes_equal:
-        return _simple_gather_all_tensors(result, world_size, group)
+        return _simple_gather_all_tensors(result, group)
 
     # 3. If not, we need to pad each local tensor to maximum size, gather and then truncate
     pad_dims = []
@@ -193,13 +197,15 @@ def gather_all_tensors(result: Tensor, group=None):
         pad_dims.append(0)
         pad_dims.append(val.item())
     result_padded = F.pad(result, pad_dims)
-    gathered_result = [torch.zeros_like(result_padded) for _ in range(world_size)]
-    dist.all_gather(gathered_result, result_padded, group)
+    
+    # gathered_result = [torch.zeros_like(result_padded) for _ in range(world_size)]
+    # dist.all_gather(gathered_result, result_padded, group)
+    gathered_result = _simple_gather_all_tensors(result_padded, group=group)
     for idx, item_size in enumerate(local_sizes):
         slice_param = [slice(dim_size) for dim_size in item_size]
         gathered_result[idx] = gathered_result[idx][slice_param]
-    group_rank = dist.get_rank(group=group)
-    gathered_result[group_rank] = result
+    # group_rank = dist.get_rank(group=group)
+    # gathered_result[group_rank] = result
     
     return gathered_result
 
@@ -210,30 +216,44 @@ def loss_func(output):
         loss_mask (Tensor): Used to mask out some portions of the loss
         output_tensor (Tensor): The tensor with the losses
     """    
+    def index_list(global_index, given_index):
+        # return local index
+        local_index = []
+        for index, v in enumerate(global_index):
+            if v in given_index:
+                local_index.append(index)
+        return local_index
     args = get_args()
     # gather特征，剔除冗余
-    print_rank_all(f"get output:{output.shape}", False)
-    loss_ranks = parallel_state.get_pipeline_model_parallel_loss_rank()
+    # print_rank_all(f"loss_func get output:{output.shape}, requires_grad={output.requires_grad}", False)
     combine_output = gather_all_tensors(output, parallel_state.get_pipeline_model_parallel_loss_group())
-    print_rank_all(f"gathered tensor={[t.shape for t in combine_output]}", False)
+    # print_rank_all(f"gathered tensor={[t.shape for t in combine_output]}", False)
+    # print_rank_all(f"gathered tensor req. gradient={[t.requires_grad for t in combine_output]}", False)
 
     image_world_size = args.world_size
     text_world_size = args.extra_world_size
+    loss_ranks = parallel_state.get_pipeline_model_parallel_loss_rank()
     image_loss_ranks = [r for r in loss_ranks if r < image_world_size]
     text_loss_ranks = [r for r in loss_ranks if r >= image_world_size]
-    image_dp_size = len(image_loss_ranks) // args.tensor_model_parallel_size
-    text_dp_size = len(text_loss_ranks) // args.xtensor_model_parallel_size
-    image_output = [combine_output[i] for i in range(image_dp_size)]
-    text_output = [combine_output[i + len(image_loss_ranks)] for i in range(text_dp_size)]
-    print_rank_all(f"selected image output:{list(range(image_dp_size))}", False)
-    print_rank_all(f"selected text output:{list(range(text_dp_size))}", False)
+    dp_src_rank = parallel_state.get_data_parallel_src_rank()
+    if dp_src_rank in image_loss_ranks:
+        image_dp_ranks = list(range(dp_src_rank, max(image_loss_ranks) + 1, args.tensor_model_parallel_size))
+        text_dp_ranks = list(range(min(text_loss_ranks), max(text_loss_ranks) + 1, args.xtensor_model_parallel_size))
+    else:
+        image_dp_ranks = list(range(min(image_loss_ranks), max(image_loss_ranks) + 1, args.tensor_model_parallel_size))
+        text_dp_ranks = list(range(dp_src_rank, max(text_loss_ranks) + 1, args.xtensor_model_parallel_size))
+    
+    image_output = [combine_output[i] for i in index_list(loss_ranks, image_dp_ranks)]
+    text_output = [combine_output[i] for i in index_list(loss_ranks, text_dp_ranks)] 
+    # print_rank_all(f"loss ranks len={len(loss_ranks)}, image ranks={image_loss_ranks}, text ranks={text_loss_ranks}", False)
+    # print_rank_all(f"selected image output:{image_dp_ranks}", False)
+    # print_rank_all(f"selected text output:{text_dp_ranks}", False)
     
     # 连接特征
     image_output = torch.cat(image_output, dim=0)
     text_output = torch.cat(text_output, dim=0)
-
-    print_rank_0(f"-LOSS-  image_output: {image_output.dtype}  text_output: {text_output.dtype}")
-    # image_output.register_hook(lambda grad: print(f"gradient of image out tensor: {grad}", flush=True))
+    assert any([image_output.requires_grad, text_output.requires_grad]), \
+        "At least one modal's output shoud has gradients. Check gather_all_tensors() function."
     text_features = text_output.contiguous()
     image_features = image_output.contiguous()
     logits_per_image = image_features @ text_features.T
@@ -246,7 +266,7 @@ def loss_func(output):
             F.cross_entropy(logits_per_text, labels) +
             F.cross_entropy(logits_per_image, labels)
     ) / 2
-    print_rank_all(f"total_loss: {total_loss}", False)
+    # print_rank_all(f"total_loss: {total_loss}", False)
     
     # averaged_loss = average_losses_across_data_parallel_group([total_loss, accuracy]) 
     

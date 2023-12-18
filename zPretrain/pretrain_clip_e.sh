@@ -13,11 +13,11 @@ source ~/workspace/mega-env/bin/activate
 # source /opt/spack/share/spack/setup-env.sh;spack load cuda@11.8.0;spack load gcc@10.2.0;spack load nccl@2.10.3
 cd /home/zanzong/workspace/Megatron-CLIP
 
-export GLOBAL_BATCH_SIZE=1020
-export MICRO_BATCHES=4
+export GLOBAL_BATCH_SIZE=1024
+export MICRO_BATCHES=16
 export TENSOR_MODEL_PARALLEL=1
-export PIPELINE_MODEL_PARALLEL=2
-export EXTRA_WORLD_SIZE=6
+export PIPELINE_MODEL_PARALLEL=3
+export EXTRA_WORLD_SIZE=4
 export XTENSOR_MODEL_PARALLEL=1
 export XPIPELINE_MODEL_PARALLEL=1
 

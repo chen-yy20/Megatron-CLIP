@@ -451,7 +451,7 @@ def core_transformer_config_from_args(args):
     kw_args['persist_layer_norm'] = not args.no_persist_layer_norm
     kw_args['layernorm_zero_centered_gamma'] = args.apply_layernorm_1p
     kw_args['layernorm_epsilon'] = args.norm_epsilon
-    kw_args['deallocate_pipeline_outputs'] = False
+    kw_args['deallocate_pipeline_outputs'] = True
     kw_args['pipeline_dtype'] = args.params_dtype
     kw_args['batch_p2p_comm'] = not args.overlap_p2p_comm
     kw_args['num_moe_experts'] = args.num_experts
@@ -478,7 +478,7 @@ def vision_transformer_config_from_args(args):
     kw_args['persist_layer_norm'] = not args.no_persist_layer_norm
     kw_args['layernorm_zero_centered_gamma'] = args.apply_layernorm_1p
     kw_args['layernorm_epsilon'] = args.norm_epsilon
-    kw_args['deallocate_pipeline_outputs'] = False
+    kw_args['deallocate_pipeline_outputs'] = True
     kw_args['pipeline_dtype'] = args.params_dtype
     kw_args['batch_p2p_comm'] = not args.overlap_p2p_comm
     kw_args['num_moe_experts'] = args.num_experts
@@ -516,7 +516,7 @@ def clip_vision_transformer_config_from_args(args):
     kw_args['persist_layer_norm'] = not args.no_persist_layer_norm
     kw_args['layernorm_zero_centered_gamma'] = args.apply_layernorm_1p
     kw_args['layernorm_epsilon'] = args.norm_epsilon
-    kw_args['deallocate_pipeline_outputs'] = False
+    kw_args['deallocate_pipeline_outputs'] = True
     kw_args['pipeline_dtype'] = args.params_dtype
     kw_args['batch_p2p_comm'] = not args.overlap_p2p_comm
     kw_args['num_moe_experts'] = args.num_experts
