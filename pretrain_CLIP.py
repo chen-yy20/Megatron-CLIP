@@ -204,10 +204,10 @@ def loss_func(output):
         return local_index
     args = get_args()
     # gather特征，剔除冗余
-    print_rank_all(f"get output:{output.shape}", False)
-    loss_ranks = parallel_state.get_pipeline_model_parallel_loss_rank()
+    # print_rank_all(f"loss_func get output:{output.shape}, requires_grad={output.requires_grad}", False)
     combine_output = gather_all_tensors(output, parallel_state.get_pipeline_model_parallel_loss_group())
-    print_rank_all(f"gathered tensor={[t.shape for t in combine_output]}", False)
+    # print_rank_all(f"gathered tensor={[t.shape for t in combine_output]}", False)
+    # print_rank_all(f"gathered tensor req. gradient={[t.requires_grad for t in combine_output]}", False)
 
     image_world_size = args.world_size - args.extra_world_size
     text_world_size = args.extra_world_size
@@ -227,12 +227,15 @@ def loss_func(output):
     # print_rank_all(f"loss ranks len={len(loss_ranks)}, image ranks={image_loss_ranks}, text ranks={text_loss_ranks}", False)
     # print_rank_all(f"selected image output:{image_dp_ranks}", False)
     # print_rank_all(f"selected text output:{text_dp_ranks}", False)
+<<<<<<< HEAD
     # image_dp_size = len(image_loss_ranks) // args.tensor_model_parallel_size
     # text_dp_size = len(text_loss_ranks) // args.xtensor_model_parallel_size
     # image_output = [combine_output[i] for i in range(image_dp_size)]
     # text_output = [combine_output[i + len(image_loss_ranks)] for i in range(text_dp_size)]
     # print_rank_all(f"selected image output:{list(range(image_dp_size))}", False)
     # print_rank_all(f"selected text output:{list(range(text_dp_size))}", False)
+=======
+>>>>>>> a4efb4e7 (fix: grad missing after feature allgather)
     
     # 连接特征
     image_output = torch.cat(image_output, dim=0)
