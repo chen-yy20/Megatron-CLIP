@@ -175,7 +175,7 @@ def forward_step(
     if not isinstance(input_tensor, list):
         input_tensor = [input_tensor]
         unwrap_output_tensor = True
-    print_rank_all(f"call forward step", False)
+    # print_rank_all(f"call forward step", False)
     # 从model中提取出特有的set_input_tensor方法
     set_input_tensor = get_attr_wrapped_model(model, "set_input_tensor")
     set_input_tensor(input_tensor)
@@ -242,7 +242,7 @@ def backward_step(input_tensor, output_tensor, output_tensor_grad, model_type, c
 
     if config.timers is not None:
         config.timers('backward-compute', log_level=2).start()
-    print_rank_all(f"call forward step", False)
+    # print_rank_all(f"call backward step", False)
     # Retain the grad on the input_tensor.
     unwrap_input_tensor_grad = False
     if not isinstance(input_tensor, list):
