@@ -233,7 +233,7 @@ class CLIPTextModel(MegatronModule):
                 state_dict[self._word_embeddings_for_head_key], strict=strict)
 
 # TODO: To be done
-class combined_CLIPModel(MegatronModule):
+class CombinedCLIPModel(MegatronModule):
     def __init__(
             self,
             vision_cfg: TransformerConfig,
@@ -264,7 +264,9 @@ class combined_CLIPModel(MegatronModule):
         self.post_process = post_process
 
     def set_input_tensor(self, input_tensor):
-        self.input_tensor = input_tensor
+        # If not the first stage, forward func will read input from here
+        self.visual.set_input_tensor(input_tensor['image'])
+        self.text.set_input_tensor(input_tensor['text'])
 
     def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
         pass

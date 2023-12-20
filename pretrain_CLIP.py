@@ -75,15 +75,10 @@ def get_batch(data_iterator):
         data = {}
         if is_extra_branch_rank():
             keys = ['text']
-            data['text'] = combine_data[1].to(dtype=torch.int32) # 将数据转换为相同目标类型
+            data['text'] = combine_data[1].to(dtype=torch.int32) # 将数据转换为相同目标类型7
         else:
             keys = ['image']
             data['image'] = combine_data[0].to(dtype=torch.float32)
-        # keys = ['image', 'text']
-        # data['image'] = combine_data[0]
-        # data['text'] = combine_data[1].to(dtype = torch.float16)
-        # print_rank_0(f"Data type: {data['image'].dtype} {data['text'].dtype}")
-        
     else:
         # 非TP的src进程不会得到数据
         keys = ['text'] if is_extra_branch_rank() else ['image']
@@ -97,24 +92,8 @@ def get_batch(data_iterator):
         tokens = data_b['text'].contiguous()
     else:
         tokens = data_b['image'].contiguous()
+    return tokens
 
-    # # Get the masks and postition ids.
-    # args.reset_position_ids,
-    #         args.reset_attention_mask,
-    #         args.eod_mask_loss
-    if is_extra_branch_rank():
-        eod_token = 49408 # begin: 49408 end: 49408 
-        attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
-            tokens,
-            eod_token,
-            reset_attention_mask=True,
-            reset_position_ids=True,
-            eod_mask_loss=True,
-            )
-
-        return tokens, loss_mask, attention_mask, position_ids
-    else:
-        return tokens, None, None, None
 
 class GroupAllGather(torch.autograd.Function):
     @staticmethod
@@ -288,7 +267,7 @@ def forward_step(data_iterator, model):
     timers('batch-generator', log_level=2).start()
     # print_rank_all("begin get_batch()")
 
-    tokens, loss_mask, attention_mask, position_ids = get_batch(data_iterator)
+    tokens = get_batch(data_iterator)
 
     # print_rank_all(f"input tokens: {tokens.shape} {tokens[:1,:10]}")
     timers('batch-generator').stop()
