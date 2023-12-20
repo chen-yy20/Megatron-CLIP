@@ -37,7 +37,7 @@ from deepspeed.runtime.utils import see_memory_usage
 
 # Get data
 
-def model_provider(pre_process=True, post_process=True):
+def model_provider(pre_process=True, text_pre_process=False, post_process=True):
     """Builds the model. """
     args = get_args()
 
@@ -48,8 +48,10 @@ def model_provider(pre_process=True, post_process=True):
     model = CLIP_model.CombinedCLIPModel(
         vision_cfg=vision_config,
         text_cfg=text_config,
-        pre_process=pre_process,
-        post_process=post_process,
+        vision_pre_process=pre_process,
+        vision_post_process=post_process,
+        text_pre_process=text_pre_process,
+        text_post_process=post_process,
     )
     model.to(torch.cuda.current_device())
     see_memory_usage(f"after building CLIP model", force=True)

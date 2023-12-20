@@ -239,6 +239,32 @@ def get_model(model_provider_func, model_type=ModelType.encoder_or_decoder, wrap
             )
             this_model.model_type = model_type
             model.append(this_model)
+    elif mpu.get_pipeline_model_parallel_world_size() > 1 and \
+        args.bidirectional_pipeline is True:
+        # return a model list for wave-like pipeline.
+        # consider vision-text modalities are bidirectionly placed, i.e., 2 models per device
+        # TODO: Support flexible placing.
+        pre_process = mpu.is_pipeline_first_stage()
+        post_process = mpu.is_pipeline_last_stage()
+        model = model_provider_func(
+                pre_process=pre_process,
+                post_process=post_process
+            )
+        model[0].model_type = model_type
+        model[1].model_type = model_type
+
+    elif args.attached_modal:
+        pre_process = mpu.is_pipeline_first_stage()
+        text_pre_process = mpu.is_attached_first_stage()
+        post_process = mpu.is_pipeline_last_stage()
+        this_model = model_provider_func(
+                pre_process=pre_process,
+                text_pre_process=text_pre_process,
+                post_process=post_process
+            )
+        this_model.model_type = model_type
+        model.append(this_model)
+        
     else: # for non-interleaved pipeline
         pre_process = mpu.is_pipeline_first_stage()
         post_process = mpu.is_pipeline_last_stage()

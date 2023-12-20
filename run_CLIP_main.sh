@@ -29,7 +29,7 @@ export LOG='0'
 export LOG_LEVEL=0 # [0,1,2]
 
 # Training mode
-export TRAINING_MODE='1' # 0:独立模态 1:混合模态 2:纯DP 3:ZeRO
+export TRAINING_MODE='0' # 0:独立模态 1:混合模态 2:纯DP 3:ZeRO 4: 双向混合流水线
 
 export extra_args=""
 

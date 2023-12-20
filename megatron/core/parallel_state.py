@@ -91,6 +91,8 @@ _GLOBAL_MEMORY_BUFFER = None
 _IS_EXTRA_BRANCH = None
 _HAVE_EXTRA_BRANCH = None
 _REAL_WORLD_SIZE = None
+_HAVE_ATTACHED_BRANCH = None
+_ATTACHED_STAGE = None
 
 # Save all valid groups for all process
 _ALL_DATA_PARALLEL_GROUPS = {}
@@ -119,6 +121,8 @@ def initialize_model_parallel(
     use_sharp: bool = False,
     context_parallel_size: int = 1,
     expert_model_parallel_size: int = 1,
+    bidirectional_pipeline=False,
+    attached_stage: Optional[int] = None,
 ) -> None:
     """Initialize model data parallel groups.
 
@@ -215,6 +219,8 @@ def initialize_model_parallel(
     global _IS_EXTRA_BRANCH
     global _HAVE_EXTRA_BRANCH
     global _REAL_WORLD_SIZE
+    global _HAVE_ATTACHED_BRANCH
+    global _ATTACHED_STAGE
     _REAL_WORLD_SIZE = world_size
     rank = torch.distributed.get_rank()
     offset = 0
@@ -231,7 +237,15 @@ def initialize_model_parallel(
             if rank == 0:
                 print(msg, flush=True)
         torch.distributed.barrier()
-    
+    if attached_stage is not None:
+        assert attached_stage < pipeline_model_parallel_size, f"Attached stage {attached_stage} must be less than pipeline model parallel size {pipeline_model_parallel_size}."
+        assert attached_stage >= 0, f"Attached stage {attached_stage} must be greater than 0."
+        assert _HAVE_ATTACHED_BRANCH == None, f"Attached stage {attached_stage} must be None when using attached stage."
+        _HAVE_ATTACHED_BRANCH = True
+        _ATTACHED_STAGE = attached_stage
+        print_rank_0(f"Set attached stage {attached_stage}.")
+        
+
     if is_multi_branch:
         assert extra_world_size < world_size, f'GPUs for extra branch size {extra_world_size} must be less than whole world size {world_size}.'
         _HAVE_EXTRA_BRANCH = True
@@ -794,6 +808,17 @@ def is_extra_branch_rank():
     if _IS_EXTRA_BRANCH is None:
         return False
     return _IS_EXTRA_BRANCH
+
+def is_attached_first_stage():
+    """Check if it is an attached first stage"""
+    # assert _IS_EXTRA_BRANCH is not None, 'IS EXTRA BRANCH is not initialized'
+    if _HAVE_ATTACHED_BRANCH is None:
+        return False
+    pp_rank = get_pipeline_model_parallel_rank()
+    pp_world_size = get_pipeline_model_parallel_world_size()
+    if pp_world_size - pp_rank == _ATTACHED_STAGE:
+        return True
+    return False
 
 def check_extra_branch_rank(rank):
     """Check if the given rank is an extra branch."""

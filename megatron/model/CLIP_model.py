@@ -239,8 +239,10 @@ class CombinedCLIPModel(MegatronModule):
             self,
             vision_cfg: TransformerConfig,
             text_cfg: TransformerConfig,
-            pre_process=True,
-            post_process=True,
+            vision_pre_process=True,
+            vision_post_process=True,
+            text_pre_process=True,
+            text_post_process=True,
     ):
         args = get_args()
          # pretrain function will get the config attribute for all models
@@ -250,21 +252,18 @@ class CombinedCLIPModel(MegatronModule):
         self.visual = CLIPVisionModel(
                         config=vision_cfg,
                         args=args,
-                        pre_process=pre_process,
-                        post_process=post_process,
+                        pre_process=vision_pre_process,
+                        post_process=vision_post_process,
                         image_projection=True,
                     )
 
         self.text = CLIPTextModel(
                         config = text_cfg,
-                        pre_process=pre_process,
-                        post_process=post_process,
+                        pre_process=text_pre_process,
+                        post_process=text_post_process,
                         add_pooler=True,
                         text_projection=True,
                     )
-        self.pre_process = pre_process
-        self.post_process = post_process
-       
 
     def merge_config(self, text_cfg, vision_cfg, prefix_1='', prefix_2='v_'):
         result_dict = dict()

@@ -1206,7 +1206,13 @@ def _add_distributed_args(parser):
     
     # 跨数据中心通信模拟
     group.add_argument('--slow-down', action='store_true',
-                       default=None, help="If set, Internode comm speed will be slow down to 640Mbps.")
+                       default=None, help="If set, Internode comm speed will slow down to 640Mbps.")
+    
+    # 附着模态
+    group.add_argument('--attached-modal', action='store_true',
+                       default=None, help="If set, extra branch will attach to main branch")
+    group.add_argument("--attached-stage", type=int, default=1,
+                       help="How many pipeline stages the extra branch will attach to main branch")
 
     return parser
 
