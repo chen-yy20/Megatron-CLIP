@@ -736,17 +736,20 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
     print_datetime('before the start of training step')
     report_memory_flag = True
 
-    # TODO: the profiler is here
+    log_dir = "logs" if args.profile_dir is None else args.profile_dir
     if  args.tensorboard_profile and torch.distributed.get_rank() in args.profile_ranks:
         profiler_context = profile(
-            # schedule=torch.profiler.schedule(
-
-            # )
-                    activities=[ProfilerActivity.CPU, 
-                                ProfilerActivity.CUDA],
-                    on_trace_ready= tensorboard_trace_handler('./zTrace_virtual_2'),
-                    with_stack=True, 
-                    profile_memory=True)
+            schedule=torch.profiler.schedule(
+                        wait=2,
+                        warmup=4,
+                        active=1,
+                        repeat=0),
+            activities=[ProfilerActivity.CPU, 
+                        ProfilerActivity.CUDA],
+            on_trace_ready=tensorboard_trace_handler(dir_name=log_dir, 
+                                                     worker_name=f"rank{torch.distributed.get_rank()}"),
+            with_stack=True, 
+            profile_memory=True)
     else:
         profiler_context = nullcontext()
     with  profiler_context as prof:

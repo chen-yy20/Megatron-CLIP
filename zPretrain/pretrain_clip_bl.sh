@@ -14,8 +14,8 @@ source ~/workspace/mega-env/bin/activate
 cd /home/zanzong/workspace/Megatron-CLIP
 
 # only allow to use DP for CLIP baseline
-export GLOBAL_BATCH_SIZE=1024
-export MICRO_BATCHES=32
+export GLOBAL_BATCH_SIZE=64
+export MICRO_BATCHES=4
 export DATA_PARALLEL_SIZE=$WORLD_SIZE
 MICRO_BATCH_SIZE=$(expr $GLOBAL_BATCH_SIZE / $(($DATA_PARALLEL_SIZE*$MICRO_BATCHES)))
 
@@ -57,10 +57,10 @@ exec python -W ignore \
         --img-h 256 \
         --img-w 256 \
         --v-global-average-pool \
-        --timing-log-level 2 \
-        --log-timers-to-tensorboard \
-        --log-memory-to-tensorboard \
-        --tensorboard-dir ./zLog_DP \
+        # --timing-log-level 2 \
+        # --log-timers-to-tensorboard \
+        # --log-memory-to-tensorboard \
+        # --tensorboard-dir ./zLog_DP \
 
         # --recompute-granularity selective \
         # --train-data-path /mnt/zoltan/zanzong/CC3M/cc3m/{00000..00331}.tar \

@@ -19,7 +19,7 @@ export TENSOR_MODEL_PARALLEL=1
 export PIPELINE_MODEL_PARALLEL=3
 export EXTRA_WORLD_SIZE=4
 export XTENSOR_MODEL_PARALLEL=1
-export XPIPELINE_MODEL_PARALLEL=1
+export XPIPELINE_MODEL_PARALLEL=2
 
 DATA_PARALLEL_SIZE=$(expr $(($WORLD_SIZE-$EXTRA_WORLD_SIZE)) / $(($TENSOR_MODEL_PARALLEL*PIPELINE_MODEL_PARALLEL)))
 XDATA_PARALLEL_SIZE=$(expr $EXTRA_WORLD_SIZE / $(($XTENSOR_MODEL_PARALLEL*XPIPELINE_MODEL_PARALLEL)))
@@ -67,7 +67,10 @@ exec python -W ignore \
         --tokenizer-type CLIPTokenizer \
         --img-h 256 \
         --img-w 256 \
-        --v-global-average-pool
+        --v-global-average-pool \
+        # --tensorboard-profile \
+        # --profile-ranks 0 7 14 15 \
+        # --profile-dir logs/v14-t2
         # --recompute-granularity selective \
         # --train-data-path /mnt/zoltan/zanzong/CC3M/cc3m/{00000..00331}.tar \
         # --num-layers-per-virtual-pipeline-stage 1 \
