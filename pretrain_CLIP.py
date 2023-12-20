@@ -245,7 +245,7 @@ def loss_func(output):
             F.cross_entropy(logits_per_text, labels) +
             F.cross_entropy(logits_per_image, labels)
     ) / 2
-    print_rank_all(f"total_loss: {total_loss}", False)
+    # print_rank_all(f"total_loss: {total_loss}", False)
     
     # averaged_loss = average_losses_across_data_parallel_group([total_loss, accuracy]) 
     
@@ -306,8 +306,16 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
     """
     args = get_args()
     img_transform = ClassificationTransform((256, 256))
-
     self_micro_batch_size = args.xmicro_batch_size if is_extra_branch_rank() else args.micro_batch_size
+    # self_dp = args.xdata_parallel_size if is_extra_branch_rank() else args.data_parallel_size
+    # mbs_cal = mbs_calculator(args.global_batch_size, self_micro_batch_size, self_dp)
+    # if is_extra_branch_rank():
+    #     args.xmicro_batch_size = mbs_cal.get()
+    #     bs = args.xmicro_batch_size
+    # else:
+    #     args.micro_batch_size = mbs_cal.get()
+    #     bs = args.micro_batch_size
+    
     dataset_args = DatasetArguments(self_micro_batch_size)
     data = {}
     data['train'] = get_wds_dataset(dataset_args, img_transform, True, tokenizer=get_tokenizer(dataset_args.model))

@@ -276,6 +276,7 @@ class combined_CLIPModel(MegatronModule):
     def forward(self, combine_input):
         image_tokens = combine_input['image']
         text_tokens = combine_input['text']
+        # image_token: torch.float32, text_tokens: torch.int32
         image_features = self.visual(image_tokens)
         text_features = self.text(text_tokens, text_tokens)
         from megatron import print_rank_all

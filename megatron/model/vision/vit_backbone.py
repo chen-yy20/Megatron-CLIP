@@ -395,13 +395,16 @@ class CLIP_VitBackbone(MegatronModule):
             )
             # rearranged_input = rearranged_input.to(torch.half)
             # assert rearranged_input.dtype == torch.half
+            args = get_args()
+            if args.deepspeed:
+                rearranged_input = rearranged_input.to(torch.float16)
             encoder_output = self.linear_encoder(rearranged_input)
             if self.class_token:
                 cls_tokens = self.cls_token.expand(encoder_output.shape[0], -1, -1)
                 concatenated_tokens = torch.cat((cls_tokens, encoder_output), dim=1)
             else:
                 concatenated_tokens = encoder_output
-            # print(concatenated_tokens.shape, self.position_ids.shape,self.position_ids[:, :concatenated_tokens.shape[1]].shape)
+            #print(f"{concatenated_tokens.shape}, {self.position_ids.shape},{self.position_ids[:, :concatenated_tokens.shape[1]].shape}", flush=True)
             token_embeddings = concatenated_tokens + \
                     self.position_embeddings(self.position_ids[:, :concatenated_tokens.shape[1]])
             # Add patch dropout and layernorm

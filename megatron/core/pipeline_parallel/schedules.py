@@ -167,6 +167,7 @@ def forward_step(
     passed-in input_tensor is used.
 
     Returns output tensor."""
+    args = get_args()
     if config.timers is not None:
         config.timers('forward-compute', log_level=2).start()
 
@@ -195,7 +196,11 @@ def forward_step(
         if not collect_non_loss_data:
             output_tensor = loss_func(output_tensor)
             loss, loss_reduced = output_tensor
-            output_tensor = loss / num_microbatches
+            # only work for Deepspeed without pipeline parallelism
+            if args.deepspeed:
+                output_tensor = loss
+            else:
+                output_tensor = loss / num_microbatches
             forward_data_store.append(loss_reduced)
         else:
             data = loss_func(output_tensor, non_loss_data=True)
@@ -219,7 +224,7 @@ def forward_step(
     return [output_tensor]
 
 
-def backward_step(input_tensor, output_tensor, output_tensor_grad, model_type, config):
+def backward_step(input_tensor, output_tensor, output_tensor_grad, model_type, config, model=None):
     """Backward step through passed-in output tensor.
 
     If last stage, output_tensor_grad is None, otherwise gradient of loss
@@ -231,6 +236,9 @@ def backward_step(input_tensor, output_tensor, output_tensor_grad, model_type, c
     # NOTE: This code currently can handle at most one skip connection. It
     # needs to be modified slightly to support arbitrary numbers of skip
     # connections.
+    args = get_args()
+    if args.deepspeed:
+        assert model is not None, "model is None"
 
     if config.timers is not None:
         config.timers('backward-compute', log_level=2).start()
@@ -250,13 +258,16 @@ def backward_step(input_tensor, output_tensor, output_tensor_grad, model_type, c
         output_tensor_grad = [output_tensor_grad]
 
     # Backward pass.
-    if output_tensor_grad[0] is None and config.grad_scale_func is not None:
-        output_tensor[0] = config.grad_scale_func(output_tensor[0])
-
-    if config.deallocate_pipeline_outputs:
-        custom_backward(output_tensor[0], output_tensor_grad[0])
+    if args.deepspeed:
+        model.backward(output_tensor[0])
     else:
-        torch.autograd.backward(output_tensor[0], grad_tensors=output_tensor_grad[0])
+        if output_tensor_grad[0] is None and config.grad_scale_func is not None:
+            output_tensor[0] = config.grad_scale_func(output_tensor[0])
+
+        if config.deallocate_pipeline_outputs:
+            custom_backward(output_tensor[0], output_tensor_grad[0])
+        else:
+            torch.autograd.backward(output_tensor[0], grad_tensors=output_tensor_grad[0])
 
     # Collect the grad of the input_tensor.
     input_tensor_grad = [None]
@@ -306,7 +317,7 @@ def forward_backward_no_pipelining(
 
     See get_forward_backward_func() for argument details
     """
-
+    args = get_args()
     if isinstance(model, list):
         assert len(model) == 1, "non-pipeline-parallel schedule does not support model chunking"
         model = model[0]
@@ -316,14 +327,22 @@ def forward_backward_no_pipelining(
         ), "non-pipeline-parallel schedule does not support model chunking"
         data_iterator = data_iterator[0]
 
-    config = get_model_config(model)
-    if config.timers is not None:
+    
+    if args.deepspeed:
+        from megatron.training_ds import get_origin_model_config
+        config = get_origin_model_config()
+    else:
+        config = get_model_config(model)
+
+    if config.timers is not None :
         config.timers('forward-backward', log_level=1).start(barrier=config.barrier_with_L1_time)
 
     no_sync_func = config.no_sync_func
     if no_sync_func is None:
         no_sync_func = contextlib.nullcontext
 
+    if args.deepspeed:
+        model.set_gradient_accumulation_boundary(False)
     model_type = get_model_type(model)
 
     forward_data_store = []
@@ -341,8 +360,9 @@ def forward_backward_no_pipelining(
                 collect_non_loss_data,
             )
             if not forward_only:
-                backward_step(input_tensor, output_tensor, output_tensor_grad, model_type, config)
-
+                backward_step(input_tensor, output_tensor, output_tensor_grad, model_type, config, model)
+    if args.deepspeed:
+        model.set_gradient_accumulation_boundary(True)
     # Run computation for last microbatch out of context handler (want to
     # synchronize gradients).
     output_tensor = forward_step(
@@ -357,12 +377,12 @@ def forward_backward_no_pipelining(
     )
 
     if not forward_only:
-        backward_step(input_tensor, output_tensor, output_tensor_grad, model_type, config)
+        backward_step(input_tensor, output_tensor, output_tensor_grad, model_type, config, model)
 
     if config.timers is not None:
         config.timers('forward-backward').stop()
 
-    if config.finalize_model_grads_func is not None and not forward_only:
+    if config.finalize_model_grads_func is not None and not forward_only and not args.deepspeed:
         # Finalize model grads (perform full grad all-reduce / reduce-scatter for
         # data parallelism and layernorm all-reduce for sequence parallelism).
         config.finalize_model_grads_func([model])

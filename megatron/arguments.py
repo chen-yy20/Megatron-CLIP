@@ -15,6 +15,8 @@ from tools.retro.utils import get_args_path as get_retro_args_path
 
 from megatron.core.transformer import TransformerConfig
 
+import deepspeed
+
 
 
 def parse_args(extra_args_provider=None, ignore_unknown_args=False):
@@ -41,6 +43,9 @@ def parse_args(extra_args_provider=None, ignore_unknown_args=False):
     parser = _add_transformer_engine_args(parser)
     parser = _add_retro_args(parser)
     parser = _add_experimental_args(parser)
+    parser = _add_zero_args(parser)
+
+    parser = deepspeed.add_config_arguments(parser)
 
     # Custom arguments.
     if extra_args_provider is not None:
@@ -1187,8 +1192,25 @@ def _add_distributed_args(parser):
                        help='Use distributed optimizer.')
     group.add_argument('--expert-model-parallel-size', type=int, default=1,
                        help='Degree of expert model parallelism.')
+
     return parser
 
+def _add_zero_args(parser):
+    """Text generate arguments."""
+
+    group = parser.add_argument_group('ZeRO configurations', 'configurations')
+    group.add_argument("--zero-stage", type=int, default=1.0)
+    group.add_argument('--zero-reduce-scatter', action='store_true',
+                       help='Use reduce scatter if specified')
+    group.add_argument('--zero-contigious-gradients', action='store_true',
+                       help='Use contigious memory optimizaiton if specified')
+    group.add_argument("--zero-reduce-bucket-size", type=int, default=0.0)
+    group.add_argument("--zero-allgather-bucket-size", type=int, default=0.0)
+    group.add_argument('--remote-device', type=str, default='none', choices=['none', 'cpu', 'nvme'],
+                      help='Remote device for ZeRO-3 initialized parameters.')
+    group.add_argument('--use-pin-memory', action='store_true',
+                     help='Use pinned CPU memory for ZeRO-3 initialized model parameters.')
+    return parser
 
 def _add_validation_args(parser):
     group = parser.add_argument_group(title='validation')
@@ -1290,6 +1312,9 @@ def _add_data_args(parser):
                        'end-of-document token.')
     group.add_argument('--eod-mask-loss', action='store_true',
                        help='Mask loss for the end of document tokens.')
+    # Add for Deepspeed
+    group.add_argument('--data-efficiency-curriculum-learning', action='store_true',
+                       help='Use DeepSpeed data efficiency library curriculum learning feature.')
 
     return parser
 
