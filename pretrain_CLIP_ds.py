@@ -57,8 +57,8 @@ def model_provider(pre_process=True, post_process=True) -> CLIP_model.combined_C
     with deepspeed.zero.Init(
         data_parallel_group=mpu.get_data_parallel_group(),
                              remote_device=None if args.remote_device == 'none' else args.remote_device,
-                             config_dict_or_path=args.deepspeed_config,
-                             # config_dict_or_path='./ds_config.json',
+                             # config_dict_or_path=args.deepspeed_config,
+                             config_dict_or_path='./ds_config.json',
                              enabled=args.zero_stage == 3,
                              mpu=mpu
     ):      
@@ -180,7 +180,6 @@ def loss_func(output_tensor_dict):
     """    
     args = get_args()
     # gather特征，剔除冗余
-    world_size = torch.distributed.get_world_size()
     image_output = output_tensor_dict['image']
     text_output = output_tensor_dict['text']
     combined_image_output = gather_all_tensors(image_output)
@@ -271,21 +270,6 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
 
     return train_ds, None, None
 
-# def _create_ds_config_dict():
-#     args = get_args()
-#     if isinstance(args.deepspeed_config, dict) :
-#         ds_config_dict = args.deepspeed_config
-#     else:
-#         with open(args.deepspeed_config, 'r', encoding='utf-8') as config_file:
-#             ds_config_dict = json.load(config_file)
-
-#     if args.universal_checkpoint:
-#         ds_config_dict["checkpoint"] = {"load_universal": True}
-
-#     # Clear config path
-#     args.deepspeed_config = None 
-
-#     return ds_config_dict
 
 def command_exists(cmd):
     result = subprocess.Popen(f'type {cmd}', stdout=subprocess.PIPE, shell=True)

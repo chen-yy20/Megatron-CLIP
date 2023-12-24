@@ -1,11 +1,11 @@
 #!/bin/bash
 set -ex
 
-export NNODES=$(( $DATA_PARALLEL_SIZE * $TENSOR_PARALLEL_SIZE * $PIPELINE_PARALLEL_SIZE / $GPUS_PER_NODE))
 export MASTER_ADDR=$(scontrol show jobid=$SLURM_JOB_ID | tr '=' ' ' | grep BatchHost | awk '{print $2}')
 export NODE_RANK=$(expr $SLURM_PROCID / $NNODES)
 export WORLD_SIZE=$(($GPUS_PER_NODE*$NNODES))
 export RANK=$SLURM_PROCID
+export LOCAL_RANK=$(expr $SLURM_PROCID % $GPUS_PER_NODE)
 export CUDA_DEVICE_MAX_CONNECTIONS=1 # for async gradient all reduce
 
 
@@ -14,16 +14,8 @@ DS_CONFIG=ds_config.json
 TP=1
 PP=1
 
+TRAIN_SAMPLES=$(( $GLOBAL_BATCH_SIZE * 5))
 
-# only allow to use DP for CLIP baseline
-export GLOBAL_BATCH_SIZE=128
-export MICRO_BATCHES=32
-export DATA_PARALLEL_SIZE=$WORLD_SIZE
-MICRO_BATCH_SIZE=$(expr $GLOBAL_BATCH_SIZE / $(($DATA_PARALLEL_SIZE*$MICRO_BATCHES)))
-
-TRAIN_SAMPLES=$(( $GLOBAL_BATCH_SIZE * 10))
-
-ZERO_STAGE=1
 
 # OUTPUT_DIR=ds_z${ZERO_STAGE}_nl${NLAYERS}_hs${HIDDEN}_gb${GLOBAL_BATCH}_mb${MICRO_BATCH}
 #OUTPUT_DIR=baseline_nl${NLAYERS}_hs${HIDDEN}_gb${GLOBAL_BATCH}_mb${MICRO_BATCH}
@@ -40,7 +32,7 @@ cat <<EOT > $DS_CONFIG
   },
 
   "fp16": {
-    "enabled": true,
+    "enabled": false,
     "initial_scale_power": 12
   },
 
@@ -55,25 +47,27 @@ ds_args=" --deepspeed ${ds_args}"
 # ds_args=" --no-pipeline-parallel ${ds_args}" 
 ds_args=" --deepspeed_config=$DS_CONFIG ${ds_args}"
 ds_args=" --zero-stage=$ZERO_STAGE ${ds_args}"
-# ds_args=" --deepspeed-activation-checkpointing ${ds_args}"
 
+if [ "$CHECK_POINT" = 1 ]; then
+  ds_args=" --recompute-activations ${ds_args}"
+fi
 
-export MASTER_PORT=$(expr $RANDOM % 10000 + 10000)
 # source ~/mega-env/bin/activate
 # cd /home/chen-yy20/Megatron-LM
 
-deepspeed --master_port $MASTER_PORT \
-    pretrain_CLIP_ds.py \
+# deepspeed --master_port $MASTER_PORT \
+# deepspeed ./pretrain_CLIP_ds.py \
+  exec python -u ./pretrain_CLIP_ds.py \
     --transformer-impl local \
     --global-batch-size $GLOBAL_BATCH_SIZE \
 	  --tensor-model-parallel-size 1 \
 	  --pipeline-model-parallel-size 1 \
     --micro-batch-size $MICRO_BATCH_SIZE \
-	  --v-num-layers 12 \
+	  --v-num-layers 56 \
     --v-hidden-size 1792 \
     --v-num-attention-heads 8 \
     --v-seq-length 264 \
-    --num-layers 12 \
+    --num-layers 36 \
 	  --hidden-size 1280 \
     --num-attention-heads 20 \
     --seq-length 77 \
