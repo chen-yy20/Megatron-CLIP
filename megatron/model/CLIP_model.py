@@ -250,7 +250,7 @@ class CombinedCLIPModel(MegatronModule):
                         args=args,
                         pre_process=pre_process,
                         post_process=post_process,
-                        image_projection= True,
+                        image_projection=True,
                     )
 
         self.text = CLIPTextModel(
@@ -262,9 +262,14 @@ class CombinedCLIPModel(MegatronModule):
                     )
         self.pre_process = pre_process
         self.post_process = post_process
+        # pretrain function will get the config attribute for all models
+        self.config = [vision_cfg, text_cfg]
 
     def set_input_tensor(self, input_tensor):
         # If not the first stage, forward func will read input from here
+        assert len(input_tensor) == 1, \
+                'input_tensor should only be length 1 for stage with both encoder and decoder'
+        input_tensor = input_tensor[0]
         self.visual.set_input_tensor(input_tensor['image'])
         self.text.set_input_tensor(input_tensor['text'])
 

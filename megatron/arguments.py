@@ -1136,6 +1136,9 @@ def _add_distributed_args(parser):
                        help='Extra batch size per model instance (local batch size). '
                        'Global batch size is local batch size times data '
                        'parallel size times number of micro batches.')
+    group.add_argument('--uniform-modility', action='store_true',
+                       help='Naive model parallelism for multimodal encoder, which' + 
+                       'divides all modal branches uniformly if specified.')
 
     group.add_argument('--tensor-model-parallel-size', type=int, default=1,
                        help='Degree of tensor model parallelism.')

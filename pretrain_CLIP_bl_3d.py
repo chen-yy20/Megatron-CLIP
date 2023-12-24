@@ -198,10 +198,10 @@ def loss_func(output):
     # print_rank_all(f"gathered tensor={[t.shape for t in combine_output]}", False)
     # print_rank_all(f"gathered tensor req. gradient={[t.requires_grad for t in combine_output]}", False)
 
-    local_dp_src_rank = (dist.get_rank() / args.pipeline_model_parallel_size) % args.tensor_model_parallel_size
+    local_dp_src_rank = dist.get_rank() - (dist.get_rank() // args.tensor_model_parallel_size) * args.tensor_model_parallel_size
     image_output = [combine_vision_output[i] for i in range(local_dp_src_rank, len(combine_vision_output), args.tensor_model_parallel_size)]
     text_output = [combine_text_output[i] for i in range(local_dp_src_rank, len(combine_text_output), args.tensor_model_parallel_size)] 
-    print_rank_all(f"loss dp src local rank={local_dp_src_rank}, image len={len(image_output)}, text len={len(text_output)}", False)
+    # print_rank_all(f"loss dp src local rank={local_dp_src_rank}, image len={len(image_output)}, text len={len(text_output)}", False)
 
     # 连接特征
     image_output = torch.cat(image_output, dim=0)

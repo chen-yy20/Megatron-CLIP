@@ -114,6 +114,8 @@ def finalize_model_grads(model):
         config = get_origin_model_config()
     else: 
         config = get_model_config(model[0])
+        if isinstance(config, list):
+            config = config[0]
 
     # All-reduce / reduce-scatter across DP replicas.
     if config.timers is not None:

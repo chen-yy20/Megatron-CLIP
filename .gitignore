@@ -8,4 +8,4 @@ slurm*
 logs
 .vscode
 zData
-zLog_DP
+exp_launcher.py

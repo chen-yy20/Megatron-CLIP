@@ -354,6 +354,7 @@ class CLIP_VitBackbone(MegatronModule):
             # post_layer_norm=self.post_layer_norm,
             post_norm = False,  # 在外面已经使用了ln
             drop_path_rate=self.drop_path_rate,
+            modality="image"
         )
         scale = self.hidden_size ** -0.5
         if self.post_process:
