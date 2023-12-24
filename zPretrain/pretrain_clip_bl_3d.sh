@@ -13,34 +13,25 @@ source ~/workspace/mega-env/bin/activate
 # source /opt/spack/share/spack/setup-env.sh;spack load cuda@11.8.0;spack load gcc@10.2.0;spack load nccl@2.10.3
 cd /home/zanzong/workspace/Megatron-CLIP
 
+
 export GLOBAL_BATCH_SIZE=1024
-# export MICRO_BATCHES=16
+# export MICRO_BATCHES=128
 # export TENSOR_MODEL_PARALLEL=1
-# export PIPELINE_MODEL_PARALLEL=3
-# export EXTRA_WORLD_SIZE=4
-# export XTENSOR_MODEL_PARALLEL=1
-# export XPIPELINE_MODEL_PARALLEL=2
+# export PIPELINE_MODEL_PARALLEL=4
 
-DATA_PARALLEL_SIZE=$(expr $(($WORLD_SIZE-$EXTRA_WORLD_SIZE)) / $(($TENSOR_MODEL_PARALLEL*$PIPELINE_MODEL_PARALLEL)))
-XDATA_PARALLEL_SIZE=$(expr $EXTRA_WORLD_SIZE / $(($XTENSOR_MODEL_PARALLEL*$XPIPELINE_MODEL_PARALLEL)))
+DATA_PARALLEL_SIZE=$(expr $WORLD_SIZE / $(($TENSOR_MODEL_PARALLEL*$PIPELINE_MODEL_PARALLEL)))
 MICRO_BATCH_SIZE=$(expr $GLOBAL_BATCH_SIZE / $(($DATA_PARALLEL_SIZE*$MICRO_BATCHES)))
-XMICRO_BATCH_SIZE=$(expr $GLOBAL_BATCH_SIZE / $(($XDATA_PARALLEL_SIZE*$MICRO_BATCHES)))
 # TRAIN_SAMPLES=$(( $GLOBAL_BATCH_SIZE * 50))
-TRAIN_SAMPLES=$(( $GLOBAL_BATCH_SIZE * 5))
-
+TRAIN_SAMPLES=$(($GLOBAL_BATCH_SIZE * 5))
 
 exec python -W ignore \
-        ./pretrain_CLIP.py \
+        ./pretrain_CLIP_bl_3d.py \
         --transformer-impl local \
         --global-batch-size $GLOBAL_BATCH_SIZE \
 	--tensor-model-parallel-size $TENSOR_MODEL_PARALLEL \
 	--pipeline-model-parallel-size $PIPELINE_MODEL_PARALLEL \
         --micro-batch-size $MICRO_BATCH_SIZE \
-        --extra-world-size $EXTRA_WORLD_SIZE \
-        --xtensor-model-parallel-size $XTENSOR_MODEL_PARALLEL \
-        --xpipeline-model-parallel-size $XPIPELINE_MODEL_PARALLEL \
-        --xmicro-batch-size $XMICRO_BATCH_SIZE \
-	--v-num-layers $VISION_L \
+        --v-num-layers $VISION_L \
         --v-hidden-size 1792 \
         --v-num-attention-heads 8 \
         --v-seq-length 264 \
@@ -67,13 +58,5 @@ exec python -W ignore \
         --img-h 256 \
         --img-w 256 \
         --v-global-average-pool \
-        # --tensorboard-profile \
-        # --profile-ranks 12 13 14 15 \
-        # --profile-dir logs/v12-t4-12_13_14_15
-        # --recompute-granularity selective \
-        # --train-data-path /mnt/zoltan/zanzong/CC3M/cc3m/{00000..00331}.tar \
-        # --num-layers-per-virtual-pipeline-stage 1 \
-        # --tensorboard-profile \
-        # --tensorboard-dir ./tensorboard \
-        # --log-memory-to-tensorboard \
-        # --log-timers-to-tensorboard
+        --uniform-modility \
+        # --timing-log-level 2 \

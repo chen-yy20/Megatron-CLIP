@@ -108,6 +108,9 @@ def finalize_model_grads(model):
     last pipeline stages (if not tied)."""
 
     config = get_model_config(model[0])
+    # FIXME just use one config for uniform_forward_backward_pipelining_without_interleaving
+    if isinstance(config, list):
+        config = config[0]
 
     # All-reduce / reduce-scatter across DP replicas.
     if config.timers is not None:

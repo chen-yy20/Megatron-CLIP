@@ -1325,7 +1325,7 @@ def _determine_layer_num(args):
     return local_stage_layer_num, offset
 
 
-def _get_num_layers(args, model_type, is_decoder=False):
+def _get_num_layers(args, model_type, is_decoder=False, modality=None):
     """Compute the number of transformer layers resident on the current rank."""
     is_encoder_and_decoder_model = (model_type == ModelType.encoder_and_decoder)
     if model_type == ModelType.retro_encoder:
@@ -1359,6 +1359,7 @@ def _get_num_layers(args, model_type, is_decoder=False):
             else:
                 num_layers = args.decoder_num_layers // num_ranks_in_decoder
         elif has_extra_branch():
+            # For separate-modality case
             if args.standalone_embedding_stage and mpu.get_pipeline_model_parallel_rank() == 0:
                 num_layers = 0
             else:
@@ -1368,7 +1369,13 @@ def _get_num_layers(args, model_type, is_decoder=False):
             assert args.num_layers == args.encoder_num_layers
             assert args.num_layers % args.transformer_pipeline_model_parallel_size == 0, \
                 'num_layers must be divisible by transformer_pipeline_model_parallel_size'
-
+            # TODO handle the case that num_layers cannot be divisibled
+            total_num_layers = args.num_layers
+            if modality is not None:
+                # For fused-modality case
+                assert modality in ["image", "text"], "Currently support image and text."
+                if modality == "image":
+                    total_num_layers = args.v_num_layers
             # When a standalone embedding stage is used, all transformer layers
             # are divided among pipeline rank >= 1, while on pipeline rank 0,
             # ranks either contain the input embedding layer (virtual pp rank 0),
@@ -1379,7 +1386,7 @@ def _get_num_layers(args, model_type, is_decoder=False):
                 0
                 if args.standalone_embedding_stage
                 and mpu.get_pipeline_model_parallel_rank() == 0 else
-                args.num_layers // args.transformer_pipeline_model_parallel_size
+                total_num_layers // args.transformer_pipeline_model_parallel_size
             )
     # 没有流水线并行
     else:
@@ -1387,7 +1394,16 @@ def _get_num_layers(args, model_type, is_decoder=False):
             if has_extra_branch():
                 num_layers = args.encoder_num_layers if is_extra_branch_rank() else args.v_encoder_num_layers
             else:
-                num_layers = args.encoder_num_layers
+                if modality is not None:
+                    # For fused-modality case
+                    # TODO handle the case that num_layers cannot be divisibled
+                    assert modality in ["image", "text"], "Currently support image and text."
+                    if modality == "image":
+                        num_layers = args.v_num_layers
+                    else:
+                        num_layers = args.num_layers
+                else:
+                    num_layers = args.encoder_num_layers
         else:
             num_layers = args.decoder_num_layers
     return num_layers
@@ -1419,7 +1435,8 @@ class ParallelTransformer(MegatronModule):
                  post_norm=True,
                  pre_process=True,
                  post_process=True,
-                 drop_path_rate=0.0):
+                 drop_path_rate=0.0,
+                 modality=None):
         super(ParallelTransformer, self).__init__()
         args = get_args()
 
@@ -1443,6 +1460,7 @@ class ParallelTransformer(MegatronModule):
             config.distribute_saved_activations and not config.sequence_parallel
 
         self.sequence_parallel = config.sequence_parallel
+        self.modality = modality
 
         # Transformer Engine Init.
         self.transformer_engine_v_0_10 = False
@@ -1495,13 +1513,14 @@ class ParallelTransformer(MegatronModule):
         # Number of layers.
         # 只有流水线并行需要在乎模型的层数
         layers = _get_num_layers(args, model_type,
-                                          layer_type==LayerType.decoder)
+                                layer_type==LayerType.decoder, modality=self.modality)
         imbalance_offset = None
         if isinstance(layers, tuple):
             self.num_layers, imbalance_offset = layers
-            print(f"\nRank={torch.distributed.get_rank()}: get {self.num_layers} layers for stage {mpu.get_pipeline_model_parallel_rank()}, offset={imbalance_offset}", flush=True)
+            # print(f"\nRank={torch.distributed.get_rank()}: get {self.num_layers} layers for stage {mpu.get_pipeline_model_parallel_rank()}, offset={imbalance_offset}", flush=True)
         else:
             self.num_layers = layers
+            print(f"\nRank={torch.distributed.get_rank()}: get {self.num_layers} layers for stage {mpu.get_pipeline_model_parallel_rank()}", flush=True)
     
         # 不同层丢弃神经元连接的概率，以列表方式储存，一般靠近输入droppath小，靠近输出droppath大
         self.drop_path_rates = [
@@ -1621,6 +1640,7 @@ class ParallelTransformer(MegatronModule):
             self.num_layers = 1
             self.layers = torch.nn.ModuleList([ NoopTransformerLayer(1) ])
         else:
+            # print(f"\nRank={torch.distributed.get_rank()}: len of self.drop_path_rates={len(self.drop_path_rates)}, self rank layer={self.num_layers}, layers will be built={[i + 1 + offset for i in range(self.num_layers)]}")
             # 在此处建立了可以并行的transformer层
             self.layers = torch.nn.ModuleList(
                 [build_layer(i + 1 + offset) for i in range(self.num_layers)])

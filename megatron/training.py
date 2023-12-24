@@ -424,11 +424,26 @@ def train_step(forward_step_func, data_iterator,
 
     # Forward pass.
     # interleaving or not => fw/bw func
-    forward_backward_func = get_forward_backward_func()
-    self_micro_batch_size = args.xmicro_batch_size if mpu.is_extra_branch_rank() else \
-                                args.micro_batch_size
-    self_seq_length = args.seq_length if mpu.is_extra_branch_rank() else \
-                                args.v_seq_length
+    if args.uniform_modility:
+        # Normally distributed each modality to each stage.
+        self_micro_batch_size = args.micro_batch_size
+        self_seq_length = [args.v_seq_length, args.seq_length]
+        from megatron.core.pipeline_parallel.flex_schedules import \
+            uniform_forward_backward_pipelining_without_interleaving
+        forward_backward_func = uniform_forward_backward_pipelining_without_interleaving
+    elif mpu.has_extra_branch():
+        # Divid multimodal branches into different devices.
+        self_micro_batch_size = args.xmicro_batch_size if mpu.is_extra_branch_rank() else \
+                                    args.micro_batch_size
+        self_seq_length = args.seq_length if mpu.is_extra_branch_rank() else \
+                                    args.v_seq_length
+        forward_backward_func = get_forward_backward_func()
+    else:
+        # Normal training
+        self_micro_batch_size = args.micro_batch_size
+        self_seq_length = args.seq_length
+        forward_backward_func = get_forward_backward_func()
+        
     losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=data_iterator,
@@ -719,6 +734,11 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
     iteration = args.iteration
 
     # Setup some training config params
+    combined_config = None
+    if isinstance(config, list):
+        combined_config = config
+         # FIXME currently use the first config
+        config = config[0]
     config.grad_scale_func = optimizer.scale_loss
     config.timers = timers
     # TODO: Remove this once we move DDP to Core.
@@ -769,7 +789,7 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
                         model,
                         optimizer,
                         opt_param_scheduler,
-                        config)
+                        config if combined_config is None else combined_config)
             iteration += 1
             if args.tensorboard_profile and torch.distributed.get_rank() in args.profile_ranks:
                 prof.step()
