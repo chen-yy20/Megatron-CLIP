@@ -37,7 +37,7 @@ def get_tensor_shapes(
     seq_lengths: list,
     micro_batch_size: int,
     decoder_seq_length: int,
-    config,
+    configs,
 ):
     # Determine right tensor sizes (based on position of rank with respect to split
     # rank) and model size.
@@ -354,11 +354,11 @@ def uniform_forward_backward_pipelining_without_interleaving(
             "Non-interleaved pipeline parallelism does not support overlapping p2p communication"
         )
 
-    if config.timers is not None:
-        config.timers('forward-backward', log_level=1).start(barrier=config.barrier_with_L1_time)
+    if configs[0].timers is not None:
+        configs[0].timers('forward-backward', log_level=1).start(barrier=configs[0].barrier_with_L1_time)
 
     # Disable async grad reductions
-    no_sync_func = config.no_sync_func
+    no_sync_func = configs[0].no_sync_func
     if no_sync_func is None:
         no_sync_func = contextlib.nullcontext
     no_sync_context = None
@@ -398,7 +398,7 @@ def uniform_forward_backward_pipelining_without_interleaving(
     # outstanding backpropagations and becomes smaller at later pipeline stages.
     # Please refer the appendix C in https://arxiv.org/pdf/2205.05198.pdf
     max_outstanding_backprops = None
-    if config.num_microbatches_with_partial_activation_checkpoints is not None:
+    if configs[0].num_microbatches_with_partial_activation_checkpoints is not None:
         max_outstanding_backprops = num_warmup_microbatches + 1
 
     model_type = get_model_type(model)
@@ -413,7 +413,7 @@ def uniform_forward_backward_pipelining_without_interleaving(
         seq_lengths=seq_length,
         micro_batch_size=self_micro_batch_size,
         decoder_seq_length=decoder_seq_length,
-        config=config,
+        configs=configs,
     ) 
     send_tensor_shapes = get_tensor_shapes(
         rank=rank,
@@ -421,7 +421,7 @@ def uniform_forward_backward_pipelining_without_interleaving(
         seq_lengths=seq_length,
         micro_batch_size=self_micro_batch_size,
         decoder_seq_length=decoder_seq_length,
-        config=config,
+        configs=configs,
     )
 
     # Input, output tensors only need to be saved when doing backward passes
@@ -438,7 +438,7 @@ def uniform_forward_backward_pipelining_without_interleaving(
         if max_outstanding_backprops is not None:
             checkpoint_activations_microbatch = (
                 i % max_outstanding_backprops
-                >= config.num_microbatches_with_partial_activation_checkpoints
+                >= configs[0].num_microbatches_with_partial_activation_checkpoints
             )
         else:
             checkpoint_activations_microbatch = None
@@ -451,7 +451,7 @@ def uniform_forward_backward_pipelining_without_interleaving(
             num_microbatches,
             input_tensor,
             forward_data_store,
-            config,
+            configs,
             collect_non_loss_data,
             checkpoint_activations_microbatch,
         )
@@ -481,7 +481,7 @@ def uniform_forward_backward_pipelining_without_interleaving(
         if max_outstanding_backprops is not None:
             checkpoint_activations_microbatch = (
                 (i + num_warmup_microbatches) % max_outstanding_backprops
-            ) >= config.num_microbatches_with_partial_activation_checkpoints
+            ) >= configs[0].num_microbatches_with_partial_activation_checkpoints
         else:
             checkpoint_activations_microbatch = None
 
@@ -492,7 +492,7 @@ def uniform_forward_backward_pipelining_without_interleaving(
             num_microbatches,
             input_tensor,
             forward_data_store,
-            config,
+            configs,
             collect_non_loss_data,
             checkpoint_activations_microbatch,
         )
@@ -526,7 +526,7 @@ def uniform_forward_backward_pipelining_without_interleaving(
             # Enable grad sync for the last microbatch in the batch if the full
             # backward pass completes in the 1F1B stage.
             if num_warmup_microbatches == 0 and last_iteration:
-                if config.grad_sync_func is None or rank == 0:
+                if configs[0].grad_sync_func is None or rank == 0:
                     enable_grad_sync()
 
             input_tensor_grad = backward_step(
@@ -551,7 +551,7 @@ def uniform_forward_backward_pipelining_without_interleaving(
             # pipeline stages do grad reduction during pipeline
             # bubble.
             if i == num_warmup_microbatches - 1:
-                if config.grad_sync_func is None or rank == 0:
+                if configs[0].grad_sync_func is None or rank == 0:
                     enable_grad_sync()
 
             input_tensor = input_tensors.pop(0)
