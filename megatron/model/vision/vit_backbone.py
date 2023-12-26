@@ -281,6 +281,7 @@ class CLIP_VitBackbone(MegatronModule):
                  post_process=True,
                  single_token_output=False,
                  post_layer_norm=True,
+                 class_token = False,
                  drop_path_rate=0.0):
         super().__init__(config=config, share_embeddings_and_output_weights=False)
         args = get_args()
@@ -291,7 +292,7 @@ class CLIP_VitBackbone(MegatronModule):
         self.pre_process = pre_process
         self.post_process = post_process
         # self.class_token = args.v_output_tokens # FIXME
-        self.class_token = True
+        self.class_token = class_token
         self.post_layer_norm = post_layer_norm
         self.hidden_size = args.v_hidden_size
         self.patch_dim = args.patch_dim
@@ -397,8 +398,6 @@ class CLIP_VitBackbone(MegatronModule):
             # rearranged_input = rearranged_input.to(torch.half)
             # assert rearranged_input.dtype == torch.half
             args = get_args()
-            if args.deepspeed:
-                rearranged_input = rearranged_input.to(torch.float16)
             encoder_output = self.linear_encoder(rearranged_input)
             if self.class_token:
                 cls_tokens = self.cls_token.expand(encoder_output.shape[0], -1, -1)

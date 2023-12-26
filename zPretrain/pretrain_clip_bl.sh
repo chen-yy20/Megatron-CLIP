@@ -3,12 +3,9 @@ set -x
 
 export MASTER_ADDR=$(scontrol show jobid=$SLURM_JOB_ID | tr '=' ' ' | grep BatchHost | awk '{print $2}')
 export NODE_RANK=$(expr $SLURM_PROCID / $NNODES)
-export WORLD_SIZE=$(($GPUS_PER_NODE*$NNODES))
 export RANK=$SLURM_PROCID
 export CUDA_DEVICE_MAX_CONNECTIONS=1 # for async gradient all reduce
 
-TRAIN_SAMPLES=$(( $GLOBAL_BATCH_SIZE * 5))
-PROFILER_LOG_PATH=$PROFILER_LOG_PATH \
 exec python -u -W ignore \
         ./pretrain_CLIP_bl.py \
         --transformer-impl local \
@@ -16,11 +13,11 @@ exec python -u -W ignore \
 	--tensor-model-parallel-size 1 \
 	--pipeline-model-parallel-size 1 \
         --micro-batch-size $MICRO_BATCH_SIZE \
-	--v-num-layers 112 \
+	--v-num-layers 28 \
         --v-hidden-size 1792 \
         --v-num-attention-heads 8 \
         --v-seq-length 264 \
-        --num-layers 72 \
+        --num-layers 18 \
 	--hidden-size 1280 \
         --num-attention-heads 20 \
         --seq-length 77 \
@@ -43,11 +40,7 @@ exec python -u -W ignore \
         --img-h 256 \
         --img-w 256 \
         --v-global-average-pool \
-<<<<<<< HEAD
-        # --timing-log-level 2 \
-=======
-        --timing-log-level 2 \
->>>>>>> ad7fadb (ZeRO_CLIP with selective checkpoint)
+        $extra_args
         # --log-timers-to-tensorboard \
         # --log-memory-to-tensorboard \
         # --tensorboard-dir ./zLog_DP \

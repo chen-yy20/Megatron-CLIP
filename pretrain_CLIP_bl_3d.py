@@ -29,7 +29,6 @@ from megatron.arguments import core_transformer_config_from_args, \
 from megatron.model import CLIP_model
 
 # load dataset
-import argparse
 from open_CLIP.src.open_clip.factory import get_tokenizer
 from open_CLIP.src.training.data import get_wds_dataset
 from megatron.data.vit_dataset import ClassificationTransform
@@ -264,6 +263,8 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
     Args:
         train_val_test_num_samples : A list containing the number of samples in train test and validation.
     """
+    print_rank_0('> building train, validation, and test datasets '
+                'for CLIP ...')
     args = get_args()
     img_transform = ClassificationTransform((256, 256))
 
@@ -272,12 +273,6 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
     data = {}
     data['train'] = get_wds_dataset(dataset_args, img_transform, True, tokenizer=get_tokenizer(dataset_args.model))
     train_ds = data['train']
-    
-    # data['train'].set_epoch(0)
-    # train_ds = data['train'].dataloader
-
-    print_rank_0('> building train, validation, and test datasets '
-                 'for CLIP ...')
     print_rank_0("> finished creating CLIP datasets ...")
 
     return train_ds, None, None

@@ -977,6 +977,9 @@ def _add_training_args(parser):
     group.add_argument('--expert-parallel', action='store_true',
                        help='Enable expert parallel optimization.')
 
+    group.add_argument('--pure-dp', action='store_true',
+                       help='Running pure data parallel baseline.')
+
     return parser
 
 
@@ -1316,9 +1319,6 @@ def _add_data_args(parser):
                        'end-of-document token.')
     group.add_argument('--eod-mask-loss', action='store_true',
                        help='Mask loss for the end of document tokens.')
-    # Add for Deepspeed
-    group.add_argument('--data-efficiency-curriculum-learning', action='store_true',
-                       help='Use DeepSpeed data efficiency library curriculum learning feature.')
 
     return parser
 

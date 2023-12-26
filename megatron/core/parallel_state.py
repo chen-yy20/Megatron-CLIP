@@ -220,9 +220,13 @@ def initialize_model_parallel(
     ori_world_size = world_size - extra_world_size
     data_parallel_size = ori_world_size // (tensor_model_parallel_size * pipeline_model_parallel_size * context_parallel_size)
     xdata_parallel_size = extra_world_size // (xtensor_model_parallel_size * xpipeline_model_parallel_size * context_parallel_size) if is_multi_branch else 1
-    def print_rank_0(msg):
-        if rank == 0 or rank - offset == 0:
-            print(msg, flush=True)
+    def print_rank_0(msg, extra=False):
+        if extra:
+            if rank - offset == 0:
+                print(msg, flush=True)
+        else:
+            if rank == 0:
+                print(msg, flush=True)
         torch.distributed.barrier()
     
     if is_multi_branch:
@@ -244,7 +248,7 @@ def initialize_model_parallel(
             world_size = world_size - extra_world_size
             _REAL_WORLD_SIZE = world_size
             
-        print_rank_0(f"world_size: {world_size}, extra_world_size: {extra_world_size}")
+        print_rank_0(f"World_size: {world_size}| Extra_world_size: {extra_world_size}")
     else:
         _HAVE_EXTRA_BRANCH = False
 
@@ -318,7 +322,7 @@ def initialize_model_parallel(
         tp_step = context_parallel_size * tensor_model_parallel_size
         for j in range(tp_step):
             ranks = range(start_rank + j, end_rank, tp_step)
-            print_rank_0(f"ori DP group: {ranks}")
+            print_rank_0(f" DP group: {list(ranks)}")
             group = torch.distributed.new_group(ranks)
             # if tuple(ranks) not in _ALL_DATA_PARALLEL_GROUPS:
             #     _ALL_DATA_PARALLEL_GROUPS[tuple(ranks)] = group
@@ -347,7 +351,7 @@ def initialize_model_parallel(
             tp_step = context_parallel_size * xtensor_model_parallel_size
             for j in range(tp_step):
                 ranks = range(start_rank + j, end_rank, tp_step)
-                print_rank_0(f"extra DP group: {ranks}")
+                print_rank_0(f"xDP group: {list(ranks)}", extra=True)
                 group = torch.distributed.new_group(ranks)
                 # if tuple(ranks) not in _ALL_DATA_PARALLEL_GROUPS:
                 #     _ALL_DATA_PARALLEL_GROUPS[tuple(ranks)] = group
@@ -465,7 +469,7 @@ def initialize_model_parallel(
             data_parallel_group_ranks_with_cp[i]
             for data_parallel_group_ranks_with_cp in all_data_parallel_group_ranks_with_cp
         ]
-        print_rank_0(f"MP group: {ranks}")
+        print_rank_0(f" MP group: {list(ranks)}")
         group = torch.distributed.new_group(ranks)
         if rank in ranks:
             _MODEL_PARALLEL_GROUP = group
@@ -475,7 +479,7 @@ def initialize_model_parallel(
                 data_parallel_group_ranks_with_cp[i]
                 for data_parallel_group_ranks_with_cp in all_xdata_parallel_group_ranks_with_cp
             ]
-            print_rank_0(f"extra MP group: {ranks}")
+            print_rank_0(f"xMP group: {list(ranks)}", extra=True)
             group = torch.distributed.new_group(ranks)
             if rank in ranks:
                 _MODEL_PARALLEL_GROUP = group
@@ -503,7 +507,7 @@ def initialize_model_parallel(
     # ori TP group set up
     for i in range(num_tensor_model_parallel_groups):    
         ranks = range(i * tensor_model_parallel_size, (i + 1) * tensor_model_parallel_size)
-        print_rank_0(f"ori TP group: {ranks}")
+        print_rank_0(f" TP group: {list(ranks)}")
         group = torch.distributed.new_group(ranks)
         # if tuple(ranks) not in _ALL_TENSOR_MODEL_PARALLEL_GROUPS:
         #     _ALL_TENSOR_MODEL_PARALLEL_GROUPS[tuple(ranks)] = group
@@ -515,7 +519,7 @@ def initialize_model_parallel(
     if is_multi_branch:
         for i in range(x_num_tensor_model_parallel_groups):    
             ranks = range(i * xtensor_model_parallel_size + ori_world_size, (i + 1) * xtensor_model_parallel_size + ori_world_size)
-            print_rank_0(f"extra TP group: {ranks}")
+            print_rank_0(f"xTP group: {list(ranks)}", extra=True)
             group = torch.distributed.new_group(ranks)
             # if tuple(ranks) not in _ALL_TENSOR_MODEL_PARALLEL_GROUPS:
             #     _ALL_TENSOR_MODEL_PARALLEL_GROUPS[tuple(ranks)] = group
@@ -523,7 +527,6 @@ def initialize_model_parallel(
             if rank in ranks:
                 _TENSOR_MODEL_PARALLEL_GROUP = group
     
-    # print_rank_0(_ALL_TENSOR_MODEL_PARALLEL_GROUPS)
     print_rank_0("========================================================")
 
     # Build the pipeline model-parallel groups and embedding groups
@@ -544,7 +547,7 @@ def initialize_model_parallel(
     # ori PP group set up
     for i in range(num_pipeline_model_parallel_groups):
         ranks = range(i, ori_world_size, num_pipeline_model_parallel_groups)
-        print_rank_0(f"ori PP group: {ranks}")
+        print_rank_0(f" PP group: {list(ranks)}")
         group = torch.distributed.new_group(ranks)
         # if tuple(ranks) not in _ALL_PIPELINE_MODEL_PARALLEL_GROUPS:
         #     _ALL_PIPELINE_MODEL_PARALLEL_GROUPS[tuple(ranks)] = group
@@ -589,7 +592,7 @@ def initialize_model_parallel(
     if is_multi_branch:
         for i in range(x_num_pipeline_model_parallel_groups):
             ranks = range(i + ori_world_size, ori_world_size + extra_world_size, x_num_pipeline_model_parallel_groups)
-            print_rank_0(f"extra PP group: {ranks}")
+            print_rank_0(f"xPP group: {list(ranks)}", extra=True)
             group = torch.distributed.new_group(ranks)
             # if tuple(ranks) not in _ALL_PIPELINE_MODEL_PARALLEL_GROUPS:
             #     _ALL_PIPELINE_MODEL_PARALLEL_GROUPS[tuple(ranks)] = group
@@ -628,12 +631,12 @@ def initialize_model_parallel(
                 _POSITION_EMBEDDING_GROUP = group
             if rank in position_embedding_ranks:
                 _POSITION_EMBEDDING_GLOBAL_RANKS = position_embedding_ranks
-    print(f"rank={rank}, _POSITION_EMBEDDING_GLOBAL_RANKS={_POSITION_EMBEDDING_GLOBAL_RANKS}, _EMBEDDING_GLOBAL_RANKS={_EMBEDDING_GLOBAL_RANKS}", flush=True)
+    # print(f"rank={rank}, _POSITION_EMBEDDING_GLOBAL_RANKS={_POSITION_EMBEDDING_GLOBAL_RANKS}, _EMBEDDING_GLOBAL_RANKS={_EMBEDDING_GLOBAL_RANKS}", flush=True)
     global _CONTRASTIVE_LOSS_GROUP
     global _CONTRASTIVE_LOSS_RANK
     _CONTRASTIVE_LOSS_GROUP = torch.distributed.new_group(loss_rank)
     _CONTRASTIVE_LOSS_RANK = loss_rank
-    print_rank_0(f"create loss group: {loss_rank}")
+    print_rank_0(f"Create LOSS group: {loss_rank}")
     print_rank_0("========================================================")
 
     # Build the tensor + data parallel groups.
@@ -651,7 +654,7 @@ def initialize_model_parallel(
             start_rank = i * tensor_and_data_group_size_with_cp + offset
             end_rank = start_rank + tensor_and_data_group_size_with_cp
             ranks = range(start_rank, end_rank)
-        print_rank_0(f"Tensor + data parallel group with CP: {ranks}")
+        # print_rank_0(f"TP + DP group with CP: {list(ranks)}")
         group = torch.distributed.new_group(ranks)
         
         if rank in ranks:
@@ -672,14 +675,13 @@ def initialize_model_parallel(
                     former_ranks = ranks
                 else:
                     ranks = former_ranks
-            print_rank_0(f"Tensor + data parallel group: {ranks}")
+            # print_rank_0(f"TP + DP group: {list(ranks)}")
             group = torch.distributed.new_group(ranks)    
             if rank in ranks:
                 _TENSOR_AND_DATA_PARALLEL_GROUP = group
-    # Copy for an extra transformer
-    # print_rank_0("========================================================")
 
-    # Build the tensor + expert parallel groups
+
+    # # Build the tensor + expert parallel groups
     global _TENSOR_AND_EXPERT_PARALLEL_GROUP
     assert (
         _TENSOR_AND_EXPERT_PARALLEL_GROUP is None
@@ -719,88 +721,6 @@ def initialize_model_parallel(
             if rank in ranks:
                 _DATA_MODULO_EXPERT_PARALLEL_GROUP = group
 
-    # 可行（2，1；1，1） （1，1；1，1）（1，2；1，1）
-    # ## A mock group creation.
-    # dp0 = torch.distributed.new_group([0, 2])
-    # dp1 = torch.distributed.new_group([1, 3])
-    # dp2 = torch.distributed.new_group([4, 5, 6, 7])
-
-    # tp0 = torch.distributed.new_group([0, 1])
-    # tp1 = torch.distributed.new_group([2, 3])
-    # tp2 = torch.distributed.new_group([4, ])
-    # tp3 = torch.distributed.new_group([5, ])
-    # tp4 = torch.distributed.new_group([6, ])
-    # tp5 = torch.distributed.new_group([7, ])
-
-    # pp0 = torch.distributed.new_group([0, ])
-    # pp1 = torch.distributed.new_group([1, ])
-    # pp2 = torch.distributed.new_group([2, ])
-    # pp3 = torch.distributed.new_group([3, ])
-    # pp4 = torch.distributed.new_group([4, ])
-    # pp5 = torch.distributed.new_group([5, ])
-    # pp6 = torch.distributed.new_group([6, ])
-    # pp7 = torch.distributed.new_group([7, ])
-    
-    # _ALL_DATA_PARALLEL_GROUPS = {tuple([0, 2]): dp0, tuple([1, 3]): dp1, tuple([4, 5, 6, 7]): dp2}
-    # _ALL_TENSOR_MODEL_PARALLEL_GROUPS = {tuple([0, 1]): tp0, tuple([2, 3]): tp1}
-    # for i in range(4, 8):
-    #     _ALL_TENSOR_MODEL_PARALLEL_GROUPS[tuple([i])] = eval(f"tp{i - 2}")
-    # for i in range(0, 8):
-    #     _ALL_PIPELINE_MODEL_PARALLEL_GROUPS[tuple([i])] = eval(f"pp{i}")
-    # print_rank_0("============")
-    # print_rank_0(_ALL_DATA_PARALLEL_GROUPS)
-    # print_rank_0(_ALL_TENSOR_MODEL_PARALLEL_GROUPS)
-    # print_rank_0(_ALL_PIPELINE_MODEL_PARALLEL_GROUPS)
-    # print_rank_0("============")
-    # if rank == 0:
-    #     _DATA_PARALLEL_GROUP = dp0
-    #     _DATA_PARALLEL_GLOBAL_RANKS = [0, 2]
-    #     _TENSOR_MODEL_PARALLEL_GROUP = tp0
-    #     _PIPELINE_MODEL_PARALLEL_GROUP = pp0
-    #     _PIPELINE_GLOBAL_RANKS = [0, ]
-    # elif rank == 1:
-    #     _DATA_PARALLEL_GROUP = dp1
-    #     _DATA_PARALLEL_GLOBAL_RANKS = [1, 3]
-    #     _TENSOR_MODEL_PARALLEL_GROUP = tp0
-    #     _PIPELINE_MODEL_PARALLEL_GROUP = pp1
-    #     _PIPELINE_GLOBAL_RANKS = [1, ]
-    # elif rank == 2:
-    #     _DATA_PARALLEL_GROUP = dp0
-    #     _DATA_PARALLEL_GLOBAL_RANKS = [0, 2]
-    #     _TENSOR_MODEL_PARALLEL_GROUP = tp1
-    #     _PIPELINE_MODEL_PARALLEL_GROUP = pp2
-    #     _PIPELINE_GLOBAL_RANKS = [2, ]
-    # elif rank == 3:
-    #     _DATA_PARALLEL_GROUP = dp1
-    #     _DATA_PARALLEL_GLOBAL_RANKS = [1, 3]
-    #     _TENSOR_MODEL_PARALLEL_GROUP = tp1
-    #     _PIPELINE_MODEL_PARALLEL_GROUP = pp3
-    #     _PIPELINE_GLOBAL_RANKS = [3, ]
-    # elif rank == 4:
-    #     _DATA_PARALLEL_GROUP = dp2
-    #     _DATA_PARALLEL_GLOBAL_RANKS = [4, 5, 6, 7]
-    #     _TENSOR_MODEL_PARALLEL_GROUP = tp2
-    #     _PIPELINE_MODEL_PARALLEL_GROUP = pp4
-    #     _PIPELINE_GLOBAL_RANKS = [4, ]
-    # elif rank == 5:
-    #     _DATA_PARALLEL_GROUP = dp2
-    #     _DATA_PARALLEL_GLOBAL_RANKS = [4, 5, 6, 7]
-    #     _TENSOR_MODEL_PARALLEL_GROUP = tp3
-    #     _PIPELINE_MODEL_PARALLEL_GROUP = pp5
-    #     _PIPELINE_GLOBAL_RANKS = [5, ]
-    # elif rank == 6:
-    #     _DATA_PARALLEL_GROUP = dp2
-    #     _DATA_PARALLEL_GLOBAL_RANKS = [4, 5, 6, 7]
-    #     _TENSOR_MODEL_PARALLEL_GROUP = tp4
-    #     _PIPELINE_MODEL_PARALLEL_GROUP = pp6
-    #     _PIPELINE_GLOBAL_RANKS = [6, ]
-    # elif rank == 7:
-    #     _DATA_PARALLEL_GROUP = dp2
-    #     _DATA_PARALLEL_GLOBAL_RANKS = [4, 5, 6, 7]
-    #     _TENSOR_MODEL_PARALLEL_GROUP = tp5
-    #     _PIPELINE_MODEL_PARALLEL_GROUP = pp7
-    #     _PIPELINE_GLOBAL_RANKS = [7, ]
-    # ## 
 
 
     # Initialize global memory buffer

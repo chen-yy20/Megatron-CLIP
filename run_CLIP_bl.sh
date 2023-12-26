@@ -7,9 +7,9 @@ export MASTER_PORT=$(expr $RANDOM % 10000 + 10000)
 export EXP_NAME='PureDP'
 export MODEL_NAME='DP_CLIP'    
 
-export GPUS_PER_NODE='8'
-export NNODES='2'
-export NODELIST='nico[1,2]'
+export GPUS_PER_NODE='4'
+export NNODES='1'
+export NODELIST='nico[2]'
 
 DATETIME=`date +'date_%y-%m-%d_time_%H-%M-%S'`
 
@@ -42,4 +42,5 @@ srun \
 	--ntasks-per-node=$GPUS_PER_NODE \
     --gres=gpu:$GPUS_PER_NODE \
     --export=ALL \
-        bash ./zPretrain/pretrain_clip_bl.sh > ./logs/${LOG_DIR}/${LOG_NAME} 2>&1
+        bash ./zPretrain/pretrain_clip_bl.sh 
+        # > ./logs/${LOG_DIR}/${LOG_NAME} 2>&1

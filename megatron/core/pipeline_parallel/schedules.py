@@ -14,6 +14,7 @@ from megatron.core.enums import ModelType
 from megatron.core.pipeline_parallel import p2p_communication
 from megatron.core.utils import get_attr_wrapped_model, get_model_config, get_model_type
 
+
 # Types
 Shape = Union[List[int], torch.Size]
 
@@ -175,7 +176,7 @@ def forward_step(
     if not isinstance(input_tensor, list):
         input_tensor = [input_tensor]
         unwrap_output_tensor = True
-    # print_rank_all(f"call forward step", False)
+    # print(f"input tensor {input_tensor}", flush=True)
     # 从model中提取出特有的set_input_tensor方法
     set_input_tensor = get_attr_wrapped_model(model, "set_input_tensor")
     set_input_tensor(input_tensor)
@@ -195,7 +196,8 @@ def forward_step(
     if parallel_state.is_pipeline_last_stage():
         if not collect_non_loss_data:
             output_tensor = loss_func(output_tensor)
-            loss, loss_reduced = output_tensor
+            # FIXME:在此处loss_func返回以后出现了显存的骤降
+            loss, loss_reduced = output_tensor        
             # only work for Deepspeed without pipeline parallelism
             if args.deepspeed:
                 output_tensor = loss
@@ -242,7 +244,7 @@ def backward_step(input_tensor, output_tensor, output_tensor_grad, model_type, c
 
     if config.timers is not None:
         config.timers('backward-compute', log_level=2).start()
-    # print_rank_all(f"call backward step", False)
+
     # Retain the grad on the input_tensor.
     unwrap_input_tensor_grad = False
     if not isinstance(input_tensor, list):
@@ -268,6 +270,7 @@ def backward_step(input_tensor, output_tensor, output_tensor_grad, model_type, c
             custom_backward(output_tensor[0], output_tensor_grad[0])
         else:
             torch.autograd.backward(output_tensor[0], grad_tensors=output_tensor_grad[0])
+
 
     # Collect the grad of the input_tensor.
     input_tensor_grad = [None]
@@ -334,10 +337,12 @@ def forward_backward_no_pipelining(
     else:
         config = get_model_config(model)
 
+    # print(f"config:{config}", flush=True)  
     if config.timers is not None :
         config.timers('forward-backward', log_level=1).start(barrier=config.barrier_with_L1_time)
 
     no_sync_func = config.no_sync_func
+
     if no_sync_func is None:
         no_sync_func = contextlib.nullcontext
 
@@ -375,7 +380,6 @@ def forward_backward_no_pipelining(
         config,
         collect_non_loss_data,
     )
-
     if not forward_only:
         backward_step(input_tensor, output_tensor, output_tensor_grad, model_type, config, model)
 
@@ -1198,7 +1202,6 @@ def forward_backward_pipelining_without_interleaving(
             checkpoint_activations_microbatch,
         )
         send_forward(output_tensor, send_tensor_shapes, config)
-        # print_rank_all(f"send a tensor, shape={output_tensor[0].shape}", False)
 
         if not forward_only:
             input_tensors.append(input_tensor)
@@ -1209,7 +1212,6 @@ def forward_backward_pipelining_without_interleaving(
     # If all microbatches are run in warmup / cooldown phase, then no need to
     # receive this tensor here.
     if num_microbatches_remaining > 0:
-        # print_rank_all(f"call recv forward, expect shape={recv_tensor_shapes}", False)
         input_tensor = recv_forward(recv_tensor_shapes, config)
 
     # Run 1F1B in steady state.

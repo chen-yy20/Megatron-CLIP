@@ -3,34 +3,8 @@ set -x
 
 export MASTER_ADDR=$(scontrol show jobid=$SLURM_JOB_ID | tr '=' ' ' | grep BatchHost | awk '{print $2}')
 export NODE_RANK=$(expr $SLURM_PROCID / $NNODES)
-export WORLD_SIZE=$(($GPUS_PER_NODE*$NNODES))
 export RANK=$SLURM_PROCID
 export CUDA_DEVICE_MAX_CONNECTIONS=1 # for async gradient all reduce
-
-DATETIME=`date +'date_%y-%m-%d_time_%H-%M-%S'`
-
-source ~/mega-env/bin/activate
-# source /opt/spack/share/spack/setup-env.sh;spack load cuda@11.8.0;spack load gcc@10.2.0;spack load nccl@2.10.3
-cd /home/chen-yy20/Megatron-LM
-
-export TENSOR_MODEL_PARALLEL=1
-export PIPELINE_MODEL_PARALLEL=1
-
-export EXTRA_WORLD_SIZE=4
-export XTENSOR_MODEL_PARALLEL=1
-export XPIPELINE_MODEL_PARALLEL=1
-
-DATA_PARALLEL_SIZE=$(expr $(($WORLD_SIZE-$EXTRA_WORLD_SIZE)) / $(($TENSOR_MODEL_PARALLEL*PIPELINE_MODEL_PARALLEL)))
-XDATA_PARALLEL_SIZE=$(expr $EXTRA_WORLD_SIZE / $(($XTENSOR_MODEL_PARALLEL*XPIPELINE_MODEL_PARALLEL)))
-
-export MICRO_BATCHES=4
-export STAGE_MBS=24 # 必须为xTP和TP的公倍数
-MICRO_BATCH_SIZE=$(expr $STAGE_MBS / $DATA_PARALLEL_SIZE)
-XMICRO_BATCH_SIZE=$(expr $STAGE_MBS / $XDATA_PARALLEL_SIZE)
-GLOBAL_BATCH_SIZE=$(( $STAGE_MBS * $MICRO_BATCHES))
-
-TRAIN_SAMPLES=$(( $GLOBAL_BATCH_SIZE * 10))
-
 
 exec python -W ignore \
         ./pretrain_CLIP.py \

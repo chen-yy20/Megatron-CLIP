@@ -150,12 +150,7 @@ def pretrain(train_valid_test_dataset_provider,
 
     if args.deepspeed:
         args.deepspeed_config_dict = _create_ds_config_dict()
-        if "curriculum_learning" in args.deepspeed_config_dict and \
-            "enabled" in args.deepspeed_config_dict["curriculum_learning"]:
-            args.curriculum_learning_legacy = args.deepspeed_config_dict[ \
-                "curriculum_learning"]["enabled"]
-        if "compression_training" in args.deepspeed_config_dict:
-            args.compression_training = True
+        print(f"args.deepspeed_config_dict: {args.deepspeed_config_dict},如果是None可以删除了", flush=True)
 
     # Model, optimizer, and learning rate.
     timers('model-and-optimizer-setup', log_level=0).start(barrier=True)
@@ -219,9 +214,6 @@ def pretrain(train_valid_test_dataset_provider,
                             process_non_loss_data_func, config)
 
         print_datetime('after training is done')
-        # Clean the model
-        if args.compression_training:
-            model = [redundancy_clean(model[0], args.deepspeed_config_dict, mpu)]
 
         if args.save and iteration != 0:
             save_checkpoint(iteration, model, optimizer, opt_param_scheduler)
@@ -516,6 +508,8 @@ def get_origin_model_config(model_provider_func=None,
     if _MODEL_CONFIG is None:
         model = get_model(model_provider_func, model_type)
         config = get_model_config(model[0])
+        if isinstance(config, list):
+            config = config[0]
         _MODEL_CONFIG = config
 
     return _MODEL_CONFIG
@@ -557,61 +551,26 @@ def setup_model_and_optimizer(model_provider_func,
     if args.deepspeed:
         print_rank_0("DeepSpeed is enabled.")
         pp = mpu.get_pipeline_model_parallel_world_size()
-        if args.data_efficiency_curriculum_learning and build_train_valid_test_datasets_provider is not None:
-            train_ds = None
-            # Only need to build dataset on tp rank 0 since Megatron has the
-            # broadcast_data() function that broadcast data from tp rank 0.
-            if mpu.get_tensor_model_parallel_rank() == 0:
-                # Number of train/valid/test samples.
-                if args.train_samples:
-                    train_samples = args.train_samples
-                    update_train_iters(args)
-                else:
-                    train_samples = args.train_iters * args.global_batch_size
-                # eval_iters and test_iters here are not actually used, only for
-                # satisfying the input of build_train_valid_test_datasets_provider.
-                # We only need to build the training data here. And we follow
-                # baseline's logic to build eval/test dataset later in
-                # build_train_valid_test_data_iterators.
-                eval_iters = (args.train_iters // args.eval_interval + 1) * \
-                            args.eval_iters
-                test_iters = args.eval_iters
-                train_val_test_num_samples = [train_samples,
-                                            eval_iters * args.global_batch_size,
-                                            test_iters * args.global_batch_size]
-                # Build the datasets.
-                train_ds, _, _ = build_train_valid_test_datasets_provider(
-                    train_val_test_num_samples)
-            model, optimizer, args.deepspeed_dataloader, opt_param_scheduler = deepspeed.initialize(
-                model=model[0],
-                optimizer=optimizer,
-                args=args,
-                lr_scheduler=opt_param_scheduler,
-                training_data=train_ds,
-                mpu=mpu,
-                config=args.deepspeed_config_dict,
-            )
-            model.set_data_post_process_func(data_post_process)
-        else:
-            model, optimizer, _, opt_param_scheduler = deepspeed.initialize(
-                model=model[0],
-                optimizer=optimizer,
-                args=args,
-                lr_scheduler=opt_param_scheduler,
-                mpu=mpu,
-                config=args.deepspeed_config_dict,
-                dist_init_required=False,
-            )
-        if isinstance(model, deepspeed.PipelineEngine):
-            # hack to get batch_fn from pretrain_gpt.py
-            model.set_batch_fn(model.module._megatron_batch_fn)
+        
+        model, optimizer, _, opt_param_scheduler = deepspeed.initialize(
+            model=model[0],
+            optimizer=optimizer,
+            args=args,
+            lr_scheduler=opt_param_scheduler,
+            mpu=mpu,
+            config=args.deepspeed_config_dict,
+            dist_init_required=False,
+        )
+    if isinstance(model, deepspeed.PipelineEngine):
+        # hack to get batch_fn from pretrain_gpt.py
+        model.set_batch_fn(model.module._megatron_batch_fn)
 
-            assert model.grid.get_pipe_parallel_rank() == mpu.get_pipeline_model_parallel_rank()
-            assert model.grid.get_slice_parallel_rank() == mpu.get_tensor_model_parallel_rank()
-            assert model.grid.get_data_parallel_rank() == mpu.get_data_parallel_rank()
-        model = [model]
+        assert model.grid.get_pipe_parallel_rank() == mpu.get_pipeline_model_parallel_rank()
+        assert model.grid.get_slice_parallel_rank() == mpu.get_tensor_model_parallel_rank()
+        assert model.grid.get_data_parallel_rank() == mpu.get_data_parallel_rank()
+    model = [model]
 
-    # Compression has its own checkpoint loading path (e.g, loading both teacher and student models). So if compression is enabled, we skip the following checkpoint loading.
+# Compression has its own checkpoint loading path (e.g, loading both teacher and student models). So if compression is enabled, we skip the following checkpoint loading.
 
     
     if args.load is not None:
@@ -661,7 +620,7 @@ def train_step(forward_step_func, data_iterator,
         micro_batch_size=args.micro_batch_size,
         decoder_seq_length=args.decoder_seq_length,
         forward_only=False)
-    print(f"losses_reduced: {losses_reduced}", flush=True)
+    # print(f"losses_reduced: {losses_reduced}", flush=True)
     timers.log(["pure-forward"], rank=torch.distributed.get_rank(), normalizer=args.log_interval)
     # Empty unused memory.
     if args.empty_unused_memory_level >= 1:
@@ -871,13 +830,6 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
                               args.consumed_train_samples)
             writer.add_scalar('seqlen/actual_seq_length vs tokens', args.actual_seq_length,
                               args.consumed_train_tokens)
-        if args.curriculum_learning_legacy or args.data_efficiency_curriculum_learning:
-            writer.add_scalar('seqlen/curriculum_seqlen', args.curriculum_seqlen,
-                              iteration)
-            writer.add_scalar('seqlen/curriculum_seqlen vs samples', args.curriculum_seqlen,
-                              args.consumed_train_samples)
-            writer.add_scalar('seqlen/curriculum_seqlen vs tokens', args.curriculum_seqlen,
-                              args.consumed_train_tokens)
         if args.random_ltd:
             writer.add_scalar('seqlen/random_ltd_reserved_length', args.random_ltd_reserved_length,
                               iteration)
@@ -1039,10 +991,6 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
             log_string += ' num zeros: {:.1f} |'.format(num_zeros_in_grad)
         if params_norm is not None:
             log_string += ' params norm: {:.3f} |'.format(params_norm)
-        # if args.curriculum_learning_legacy or args.data_efficiency_curriculum_learning:
-        #     log_string += ' curriculum seqlen: {:5d} |'.format(args.curriculum_seqlen)
-        # if args.random_ltd:
-        #     log_string += ' random ltd reserved length: {:5d} |'.format(args.random_ltd_reserved_length)
         log_string += ' actual seqlen: {:5d} |'.format(seq_len)
         log_string += ' number of skipped iterations: {:3d} |'.format(
             total_loss_dict[skipped_iters_key])
@@ -1141,22 +1089,6 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
         args.consumed_train_samples += new_samples
         # This actual_seq_length is used for actual consumed tokens calculation, flops calculation, and logging.
         args.actual_seq_length = args.seq_length
-        # if args.curriculum_learning_legacy or args.data_efficiency_curriculum_learning:
-        #     args.actual_seq_length = args.curriculum_seqlen
-        # if args.random_ltd:
-        #     args.random_ltd_reserved_length = model[0].random_ltd_scheduler.get_current_seq()
-        #     if args.random_ltd_reserved_length < args.actual_seq_length:
-        #         args.actual_seq_length = (args.actual_seq_length * (args.num_layers - args.random_ltd_layer_num) + args.random_ltd_reserved_length * args.random_ltd_layer_num) // args.num_layers
-        # if args.curriculum_learning_legacy or args.data_efficiency_curriculum_learning:
-        #     if hasattr(args, 'data_efficiency_curriculum_learning_numel'):
-        #         act_mbsz = args.data_efficiency_curriculum_learning_numel / args.curriculum_seqlen
-        #         act_token = act_mbsz * args.actual_seq_length
-        #         args.consumed_train_tokens += mpu.get_data_parallel_world_size() * \
-        #                 get_num_microbatches() * act_token
-        #     else:
-        #         args.consumed_train_tokens += new_samples * args.actual_seq_length
-        # else:
-        #     args.consumed_train_tokens += new_samples * args.actual_seq_length
         
         # Logging.
         if args.deepspeed:
@@ -1251,18 +1183,6 @@ def evaluate(forward_step_func,
     for model_module in model:
         model_module.eval()
 
-    if args.curriculum_learning_legacy and not args.no_pipeline_parallel:
-        # When curriculum learning is used with pipeline parallelism, we need
-        # this logic to ensure that the eval data is not truncated. If there
-        # is a seqlen change due to that, we need to call
-        # reset_activation_shape() to reset some buffers in deepspeed pipeline
-        # engine.
-        if args.curriculum_seqlen < args.seq_length:
-            args.curriculum_seqlen = args.seq_length
-            if args.use_rotary_position_embeddings:
-                update_rotary_pos_emb(args.curriculum_seqlen)
-            model[0].reset_activation_shape()
-
     total_loss_dict = {}
 
     with torch.no_grad():
@@ -1327,15 +1247,6 @@ def evaluate(forward_step_func,
 
     for key in total_loss_dict:
         total_loss_dict[key] /= args.eval_iters * get_num_microbatches()
-
-    if args.curriculum_learning_legacy and not args.no_pipeline_parallel:
-        # roll back to actual curriculum seqlen at the end of eval.
-        args.curriculum_seqlen = args.curriculum_scheduler.update_difficulty( \
-            args.iteration + 1)
-        if args.curriculum_seqlen < args.seq_length:
-            if args.use_rotary_position_embeddings:
-                update_rotary_pos_emb(args.curriculum_seqlen)
-            model[0].reset_activation_shape()
 
     return total_loss_dict, collected_non_loss_data
 

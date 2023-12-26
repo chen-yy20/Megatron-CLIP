@@ -45,7 +45,7 @@ import json
 
 # Get data
 
-def model_provider(pre_process=True, post_process=True) -> CLIP_model.combined_CLIPModel:
+def model_provider(pre_process=True, post_process=True) -> CLIP_model.CombinedCLIPModel:
     """Builds the model. """
     args = get_args()
 
@@ -62,7 +62,7 @@ def model_provider(pre_process=True, post_process=True) -> CLIP_model.combined_C
                              enabled=args.zero_stage == 3,
                              mpu=mpu
     ):      
-        model = CLIP_model.combined_CLIPModel(
+        model = CLIP_model.CombinedCLIPModel(
             vision_cfg=vision_config,
             text_cfg=text_config,
             pre_process=pre_process,
@@ -297,7 +297,7 @@ def git_ds_info():
     print(f'**** Git info for Megatron: git_hash={git_hash} git_branch={git_branch} ****')
 
 if __name__ == "__main__":
-    git_ds_info()
+    # git_ds_info()
     pretrain(train_valid_test_datasets_provider,
              model_provider,
              ModelType.encoder_or_decoder,

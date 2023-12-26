@@ -43,4 +43,5 @@ srun \
 	--ntasks-per-node=$GPUS_PER_NODE \
     --gres=gpu:$GPUS_PER_NODE \
     --export=ALL \
-        bash ./zPretrain/pretrain_clip_ds.sh > ./logs/${LOG_DIR}/${LOG_NAME} 2>&1
+        bash ./zPretrain/pretrain_clip_ds.sh 
+        # > ./logs/${LOG_DIR}/${LOG_NAME} 2>&1
