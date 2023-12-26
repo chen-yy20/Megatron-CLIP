@@ -37,7 +37,7 @@ def get_tensor_shapes(
     seq_lengths: list,
     micro_batch_size: int,
     decoder_seq_length: int,
-    configs,
+    config,
 ):
     # Determine right tensor sizes (based on position of rank with respect to split
     # rank) and model size.
@@ -63,13 +63,21 @@ def get_tensor_shapes(
     #         tensor_shapes.append((decoder_seq_length, micro_batch_size, config.hidden_size))
     #         tensor_shapes.append((seq_length, micro_batch_size, config.hidden_size))
     # else:
-    for seq_length, config in zip(seq_lengths, configs):
-        tensor_shapes.append((seq_length, micro_batch_size, config.hidden_size))
+ 
+    if config.v_hidden_size is None:
+        # only one hidden-size for all modalities
+        for seq_length in seq_lengths:
+            tensor_shapes.append((seq_length, micro_batch_size, config.hidden_size))
+    else:
+        tensor_shapes.append((seq_lengths[0], micro_batch_size, config.hidden_size))
+        tensor_shapes.append((seq_lengths[1], micro_batch_size, config.v_hidden_size))
+    # for seq_length, config in zip(seq_lengths, configs):
+    #     tensor_shapes.append((seq_length, micro_batch_size, config.hidden_size))
     return tensor_shapes
 
-def recv_forward(tensor_shapes, configs, modal_keys):
+def recv_forward(tensor_shapes, config, modal_keys):
     input_tensors = dict()
-    for tensor_shape, config, modal_key in zip(tensor_shapes, configs, modal_keys):
+    for tensor_shape, modal_key in zip(tensor_shapes, modal_keys):
         if tensor_shape is None:
             input_tensors[modal_key] = None
         else:
@@ -77,9 +85,9 @@ def recv_forward(tensor_shapes, configs, modal_keys):
     return input_tensors
 
 
-def recv_backward(tensor_shapes, configs, modal_keys):
+def recv_backward(tensor_shapes, config, modal_keys):
     output_tensor_grads = dict()
-    for tensor_shape, config, modal_key in zip(tensor_shapes, configs, modal_keys):
+    for tensor_shape, modal_key in zip(tensor_shapes, modal_keys):
         if tensor_shape is None:
             output_tensor_grads[modal_key] = None
         else:
@@ -87,23 +95,23 @@ def recv_backward(tensor_shapes, configs, modal_keys):
     return output_tensor_grads
 
 
-def send_forward(output_tensors, tensor_shapes, configs, modal_keys):
-    for (modal_key, tensor_shape, config) in zip(modal_keys, tensor_shapes, configs):
+def send_forward(output_tensors, tensor_shapes, config, modal_keys):
+    for (modal_key, tensor_shape) in zip(modal_keys, tensor_shapes):
         if tensor_shape is None:
             continue
         p2p_communication.send_forward(output_tensors[modal_key], config)
 
 
-def send_backward(input_tensor_grads, tensor_shapes, configs, modal_keys):
-    for (modal_key, tensor_shape, config) in zip(modal_keys, tensor_shapes, configs):
+def send_backward(input_tensor_grads, tensor_shapes, config, modal_keys):
+    for (modal_key, tensor_shape) in zip(modal_keys, tensor_shapes):
         if tensor_shape is None:
             continue
         p2p_communication.send_backward(input_tensor_grads[modal_key], config)
 
 
-def send_forward_recv_backward(output_tensors, tensor_shapes, configs, modal_keys):
+def send_forward_recv_backward(output_tensors, tensor_shapes, config, modal_keys):
     output_tensor_grads = dict()
-    for (modal_key, tensor_shape, config) in zip(modal_keys, tensor_shapes, configs):
+    for (modal_key, tensor_shape) in zip(modal_keys, tensor_shapes):
         if tensor_shape is None:
             output_tensor_grads.append(None)
             continue
@@ -119,9 +127,9 @@ def send_forward_recv_backward(output_tensors, tensor_shapes, configs, modal_key
     return output_tensor_grads
 
 
-def send_backward_recv_forward(input_tensor_grads, tensor_shapes, configs, modal_keys):
+def send_backward_recv_forward(input_tensor_grads, tensor_shapes, config, modal_keys):
     input_tensors = dict()
-    for (modal_key, tensor_shape, config) in zip(modal_keys, tensor_shapes, configs):
+    for (modal_key, tensor_shape) in zip(modal_keys, tensor_shapes):
         if tensor_shape is None:
             input_tensors.append(None)
             continue
@@ -338,18 +346,18 @@ def uniform_forward_backward_pipelining_without_interleaving(
         ), "non-pipeline-parallel schedule does not support model chunking"
         data_iterator = data_iterator[0]
 
-    configs = get_model_config(model)
+    config = get_model_config(model)
     # FIXME currently use the first model's config for trivial functions.
-    if configs[0].overlap_p2p_comm:
+    if config.overlap_p2p_comm:
         raise ValueError(
             "Non-interleaved pipeline parallelism does not support overlapping p2p communication"
         )
 
-    if configs[0].timers is not None:
-        configs[0].timers('forward-backward', log_level=1).start(barrier=configs[0].barrier_with_L1_time)
+    if config.timers is not None:
+        config.timers('forward-backward', log_level=1).start(barrier=config.barrier_with_L1_time)
 
     # Disable async grad reductions
-    no_sync_func = configs[0].no_sync_func
+    no_sync_func = config.no_sync_func
     if no_sync_func is None:
         no_sync_func = contextlib.nullcontext
     no_sync_context = None
@@ -377,8 +385,8 @@ def uniform_forward_backward_pipelining_without_interleaving(
     )
     num_warmup_microbatches = min(num_warmup_microbatches, num_microbatches)
     num_microbatches_remaining = num_microbatches - num_warmup_microbatches
-    print(f"rank={torch.distributed.get_rank()}, total microbatches={num_microbatches}, " + \
-                    f"num warmup batches={num_warmup_microbatches}", flush=True)
+    # print(f"rank={torch.distributed.get_rank()}, total microbatches={num_microbatches}, " + \
+    #                 f"num warmup batches={num_warmup_microbatches}", flush=True)
 
     # Checkpoint the activations of partial Transformer layers in a number of micro-batches
     # within the maximum outstanding micro-batch backpropagations.
@@ -389,7 +397,7 @@ def uniform_forward_backward_pipelining_without_interleaving(
     # outstanding backpropagations and becomes smaller at later pipeline stages.
     # Please refer the appendix C in https://arxiv.org/pdf/2205.05198.pdf
     max_outstanding_backprops = None
-    if configs[0].num_microbatches_with_partial_activation_checkpoints is not None:
+    if config.num_microbatches_with_partial_activation_checkpoints is not None:
         max_outstanding_backprops = num_warmup_microbatches + 1
 
     model_type = get_model_type(model)
@@ -404,7 +412,7 @@ def uniform_forward_backward_pipelining_without_interleaving(
         seq_lengths=seq_length,
         micro_batch_size=self_micro_batch_size,
         decoder_seq_length=decoder_seq_length,
-        configs=configs,
+        config=config,
     ) 
     send_tensor_shapes = get_tensor_shapes(
         rank=rank,
@@ -412,7 +420,7 @@ def uniform_forward_backward_pipelining_without_interleaving(
         seq_lengths=seq_length,
         micro_batch_size=self_micro_batch_size,
         decoder_seq_length=decoder_seq_length,
-        configs=configs,
+        config=config,
     )
 
     # Input, output tensors only need to be saved when doing backward passes
@@ -429,12 +437,12 @@ def uniform_forward_backward_pipelining_without_interleaving(
         if max_outstanding_backprops is not None:
             checkpoint_activations_microbatch = (
                 i % max_outstanding_backprops
-                >= configs[0].num_microbatches_with_partial_activation_checkpoints
+                >= config.num_microbatches_with_partial_activation_checkpoints
             )
         else:
             checkpoint_activations_microbatch = None
 
-        input_tensor = recv_forward(recv_tensor_shapes, configs, modal_keys)
+        input_tensor = recv_forward(recv_tensor_shapes, config, modal_keys)
         output_tensor = forward_step(
             forward_step_func,
             data_iterator,
@@ -442,27 +450,27 @@ def uniform_forward_backward_pipelining_without_interleaving(
             num_microbatches,
             input_tensor,
             forward_data_store,
-            configs,
+            config,
             collect_non_loss_data,
             checkpoint_activations_microbatch,
         )
-        send_forward(output_tensor, send_tensor_shapes, configs, modal_keys)
+        send_forward(output_tensor, send_tensor_shapes, config, modal_keys)
 
         if not forward_only:
             input_tensors.append(input_tensor)
             output_tensors.append(output_tensor)
             if isinstance(output_tensor, dict):
                 for key in modal_keys:
-                    deallocate_output_tensor(output_tensor[key], configs[0].deallocate_pipeline_outputs)
+                    deallocate_output_tensor(output_tensor[key], config.deallocate_pipeline_outputs)
             else:
                 # print_rank_all(f"call deallocate_output_tensor, output_tensor={output_tensor}, {isinstance(output_tensors, dict)}", False)
-                deallocate_output_tensor(output_tensor, configs[0].deallocate_pipeline_outputs)
+                deallocate_output_tensor(output_tensor, config.deallocate_pipeline_outputs)
     # Before running 1F1B, need to receive first forward tensor.
     # If all microbatches are run in warmup / cooldown phase, then no need to
     # receive this tensor here.
     if num_microbatches_remaining > 0:
         # print_rank_all(f"call recv forward, expect shape={recv_tensor_shapes}", False)
-        input_tensor = recv_forward(recv_tensor_shapes, configs, modal_keys)
+        input_tensor = recv_forward(recv_tensor_shapes, config, modal_keys)
 
     # Run 1F1B in steady state.
     for i in range(num_microbatches_remaining):
@@ -472,7 +480,7 @@ def uniform_forward_backward_pipelining_without_interleaving(
         if max_outstanding_backprops is not None:
             checkpoint_activations_microbatch = (
                 (i + num_warmup_microbatches) % max_outstanding_backprops
-            ) >= configs[0].num_microbatches_with_partial_activation_checkpoints
+            ) >= config.num_microbatches_with_partial_activation_checkpoints
         else:
             checkpoint_activations_microbatch = None
 
@@ -483,21 +491,21 @@ def uniform_forward_backward_pipelining_without_interleaving(
             num_microbatches,
             input_tensor,
             forward_data_store,
-            configs,
+            config,
             collect_non_loss_data,
             checkpoint_activations_microbatch,
         )
 
         if forward_only:
-            send_forward(output_tensor, send_tensor_shapes, configs, modal_keys)
+            send_forward(output_tensor, send_tensor_shapes, config, modal_keys)
 
             if not last_iteration:
-                input_tensor = recv_forward(recv_tensor_shapes, configs, modal_keys)
+                input_tensor = recv_forward(recv_tensor_shapes, config, modal_keys)
 
         else:
             # print_rank_all(f"forward output_tensor={output_tensor}", False)
             output_tensor_grad = send_forward_recv_backward(
-                output_tensor, send_tensor_shapes, configs, modal_keys
+                output_tensor, send_tensor_shapes, config, modal_keys
             )
 
             # Add input_tensor and output_tensor to end of list.
@@ -505,9 +513,9 @@ def uniform_forward_backward_pipelining_without_interleaving(
             output_tensors.append(output_tensor)
             if isinstance(output_tensor, dict):
                 for key in modal_keys:
-                    deallocate_output_tensor(output_tensor[key], configs[0].deallocate_pipeline_outputs)
+                    deallocate_output_tensor(output_tensor[key], config.deallocate_pipeline_outputs)
             else:
-                deallocate_output_tensor(output_tensor, configs[0].deallocate_pipeline_outputs)
+                deallocate_output_tensor(output_tensor, config.deallocate_pipeline_outputs)
             # Pop input_tensor and output_tensor from the start of the list for
             # the backward pass.
             input_tensor = input_tensors.pop(0)
@@ -517,19 +525,19 @@ def uniform_forward_backward_pipelining_without_interleaving(
             # Enable grad sync for the last microbatch in the batch if the full
             # backward pass completes in the 1F1B stage.
             if num_warmup_microbatches == 0 and last_iteration:
-                if configs[0].grad_sync_func is None or rank == 0:
+                if config.grad_sync_func is None or rank == 0:
                     enable_grad_sync()
 
             input_tensor_grad = backward_step(
-                input_tensor, output_tensor, output_tensor_grad, model_type, configs, modal_keys
+                input_tensor, output_tensor, output_tensor_grad, model_type, config, modal_keys
             )
 
             if last_iteration:
                 input_tensor = None
-                send_backward(input_tensor_grad, recv_tensor_shapes, configs, modal_keys)
+                send_backward(input_tensor_grad, recv_tensor_shapes, config, modal_keys)
             else:
                 input_tensor = send_backward_recv_forward(
-                    input_tensor_grad, recv_tensor_shapes, configs, modal_keys
+                    input_tensor_grad, recv_tensor_shapes, config, modal_keys
                 )
 
     # Run cooldown backward passes.
@@ -542,35 +550,35 @@ def uniform_forward_backward_pipelining_without_interleaving(
             # pipeline stages do grad reduction during pipeline
             # bubble.
             if i == num_warmup_microbatches - 1:
-                if configs[0].grad_sync_func is None or rank == 0:
+                if config.grad_sync_func is None or rank == 0:
                     enable_grad_sync()
 
             input_tensor = input_tensors.pop(0)
             output_tensor = output_tensors.pop(0)
             # print_rank_all(f"colldown pop out output_tensors: {output_tensor}", False)
 
-            output_tensor_grad = recv_backward(send_tensor_shapes, configs, modal_keys)
+            output_tensor_grad = recv_backward(send_tensor_shapes, config, modal_keys)
 
             input_tensor_grad = backward_step(
-                input_tensor, output_tensor, output_tensor_grad, model_type, configs, modal_keys
+                input_tensor, output_tensor, output_tensor_grad, model_type, config, modal_keys
             )
 
-            send_backward(input_tensor_grad, recv_tensor_shapes, configs, modal_keys)
+            send_backward(input_tensor_grad, recv_tensor_shapes, config, modal_keys)
 
         # Launch any remaining grad reductions.
         if no_sync_context is not None:
             enable_grad_sync()
-            for config in configs:
+            for config in config:
                 if config.grad_sync_func is not None:
                     config.grad_sync_func(model.parameters())
 
-    if configs[0].timers is not None:
-        configs[0].timers('forward-backward').stop()
-    for config in configs:
-        if config.finalize_model_grads_func is not None and not forward_only:
-            # Finalize model grads (perform full grad all-reduce / reduce-scatter for
-            # data parallelism, layernorm all-reduce for sequence parallelism, and
-            # embedding all-reduce for pipeline parallelism).
-            config.finalize_model_grads_func([model])
+    if config.timers is not None:
+        config.timers('forward-backward').stop()
+        
+    if config.finalize_model_grads_func is not None and not forward_only:
+        # Finalize model grads (perform full grad all-reduce / reduce-scatter for
+        # data parallelism, layernorm all-reduce for sequence parallelism, and
+        # embedding all-reduce for pipeline parallelism).
+        config.finalize_model_grads_func([model])
 
     return forward_data_store

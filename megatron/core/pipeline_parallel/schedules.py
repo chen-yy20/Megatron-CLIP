@@ -1133,8 +1133,8 @@ def forward_backward_pipelining_without_interleaving(
     )
     num_warmup_microbatches = min(num_warmup_microbatches, num_microbatches)
     num_microbatches_remaining = num_microbatches - num_warmup_microbatches
-    print(f"rank={torch.distributed.get_rank()}, total microbatches={num_microbatches}, " + \
-                    f"num warmup batches={num_warmup_microbatches}", flush=True)
+    # print(f"rank={torch.distributed.get_rank()}, total microbatches={num_microbatches}, " + \
+    #                 f"num warmup batches={num_warmup_microbatches}", flush=True)
 
     # Checkpoint the activations of partial Transformer layers in a number of micro-batches
     # within the maximum outstanding micro-batch backpropagations.
