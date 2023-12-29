@@ -21,6 +21,7 @@ from megatron.global_vars import set_global_variables
 from megatron.model.transformer import bias_dropout_add_fused_train
 from megatron.model.fused_bias_gelu import bias_gelu
 
+import deepspeed
 
 def initialize_megatron(
     extra_args_provider=None,
@@ -192,7 +193,11 @@ def _initialize_distributed():
             else:
                 args.local_rank = device
             torch.cuda.set_device(device)
-        # Call the init process
+            
+    # Call the init process
+    if args.deepspeed:
+        deepspeed.init_distributed(dist_backend="nccl", auto_mpi_discovery=False)
+    else:
         torch.distributed.init_process_group(
             backend=args.distributed_backend,
             world_size=args.world_size + args.extra_world_size,

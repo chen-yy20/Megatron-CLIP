@@ -42,7 +42,7 @@ class CLIPVisionModel(MegatronModule):
                  post_process=True,
                  image_projection = True,
                  ):
-        super().__init__(config=config)
+        super().__init__(config=config, share_embeddings_and_output_weights=False)
         args = get_args()
         self.output_tokens = args.v_output_tokens
         self.hidden_size = args.v_hidden_size
@@ -124,7 +124,7 @@ class CLIPTextModel(MegatronModule):
         add_pooler = True, # mean pooler
         text_projection = True,
     ):
-        super().__init__(config=config)
+        super().__init__(config=config, share_embeddings_and_output_weights=False)
         args = get_args()
         self.pre_process = pre_process
         self.post_process = post_process
@@ -142,7 +142,7 @@ class CLIPTextModel(MegatronModule):
             pre_process=self.pre_process,
             post_process=self.post_process)
         
-        self.initialize_word_embeddings()
+        # self.initialize_word_embeddings()
 
         if self.post_process and text_projection:
             self.projection = nn.Parameter(torch.empty(config.hidden_size, args.clip_embeded_dim))
@@ -242,8 +242,9 @@ class CombinedCLIPModel(MegatronModule):
             post_process=True,
     ):
         args = get_args()
-        # 这里的config设置是乱设置的，只会影响embedding
-        super().__init__(config=vision_cfg, share_embeddings_and_output_weights=not args.untie_embeddings_and_output_weights)
+         # pretrain function will get the config attribute for all models
+        self.config = self.merge_config(text_cfg, vision_cfg)
+        super().__init__(config=self.config, share_embeddings_and_output_weights=False)
 
         self.visual = CLIPVisionModel(
                         config=vision_cfg,
@@ -262,16 +263,54 @@ class CombinedCLIPModel(MegatronModule):
                     )
         self.pre_process = pre_process
         self.post_process = post_process
-        # pretrain function will get the config attribute for all models
-        self.config = [vision_cfg, text_cfg]
+       
+
+    def merge_config(self, text_cfg, vision_cfg, prefix_1='', prefix_2='v_'):
+        result_dict = dict()
+        text_dict = text_cfg.__dict__
+        vision_dict = vision_cfg.__dict__
+        merged_dict = {**text_dict, **vision_dict}
+        for key, value in merged_dict.items():
+            if key in text_dict and key in vision_dict:
+                if text_dict[key] == vision_dict[key]:
+                    result_dict[key] = value
+                else:
+                    result_dict[prefix_1+key] = text_dict[key]
+                    result_dict[prefix_2+key] = vision_dict[key]
+            else:
+                result_dict[key] = value
+        print(f"result_dict: {result_dict}", flush=True)
+
+        def create_dataclass_from_dict(class_name, input_dict):
+            # TODO: 有通信的优化空间？
+            # 创建一个元类，用于动态生成类
+            class DictDataclassMeta(type):
+                def __new__(cls, name, bases, dct):
+                    # 将字典的键转换为类的属性
+                    for key in input_dict.keys():
+                        dct[key] = input_dict[key]
+                    return super().__new__(cls, name, bases, dct)
+
+            # 使用元类创建类
+            return DictDataclassMeta(class_name, (), {})
+        
+        merge_TransformerConfig = create_dataclass_from_dict('merge_TransformerConfig', result_dict)
+        combined_config = merge_TransformerConfig()  
+        return combined_config
 
     def set_input_tensor(self, input_tensor):
-        # If not the first stage, forward func will read input from here
-        assert len(input_tensor) == 1, \
-                'input_tensor should only be length 1 for stage with both encoder and decoder'
-        input_tensor = input_tensor[0]
-        self.visual.set_input_tensor(input_tensor['image'])
-        self.text.set_input_tensor(input_tensor['text'])
+        args = get_args()
+        if args.deepspeed or args.pure_dp:
+            # no need to set without pipeline 
+            self.input_tensor = input_tensor
+        else:
+            # If not the first stage, forward func will read input from here
+            assert len(input_tensor) == 1, \
+                    'input_tensor should only be length 1 for stage with both encoder and decoder'
+            input_tensor = input_tensor[0]
+            self.visual.set_input_tensor(input_tensor['image'])
+            self.text.set_input_tensor(input_tensor['text'])
+        
 
     def lock_image_tower(self, unlocked_groups=0, freeze_bn_stats=False):
         pass
@@ -279,6 +318,7 @@ class CombinedCLIPModel(MegatronModule):
     def forward(self, combine_input):
         image_tokens = combine_input['image']
         text_tokens = combine_input['text']
+        # image_token: torch.float32, text_tokens: torch.int32
         image_features = self.visual(image_tokens)
         text_features = self.text(text_tokens, text_tokens)
         from megatron import print_rank_all

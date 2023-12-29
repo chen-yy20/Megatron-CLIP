@@ -86,6 +86,8 @@ def get_megatron_optimizer(model,
         raise Exception('{} optimizer is not supported.'.format(
             args.optimizer))
 
+    if args.deepspeed:
+        return optimizer
     # Determine whether the params have main-grad field.
     params_have_main_grad = True
 
