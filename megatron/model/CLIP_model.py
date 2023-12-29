@@ -42,7 +42,7 @@ class CLIPVisionModel(MegatronModule):
                  post_process=True,
                  image_projection = True,
                  ):
-        super().__init__(config=config)
+        super().__init__(config=config, share_embeddings_and_output_weights=False)
         args = get_args()
         self.output_tokens = args.v_output_tokens
         self.hidden_size = args.v_hidden_size
@@ -124,7 +124,7 @@ class CLIPTextModel(MegatronModule):
         add_pooler = True, # mean pooler
         text_projection = True,
     ):
-        super().__init__(config=config)
+        super().__init__(config=config, share_embeddings_and_output_weights=False)
         args = get_args()
         self.pre_process = pre_process
         self.post_process = post_process
@@ -142,7 +142,7 @@ class CLIPTextModel(MegatronModule):
             pre_process=self.pre_process,
             post_process=self.post_process)
         
-        self.initialize_word_embeddings()
+        # self.initialize_word_embeddings()
 
         if self.post_process and text_projection:
             self.projection = nn.Parameter(torch.empty(config.hidden_size, args.clip_embeded_dim))
@@ -244,7 +244,7 @@ class CombinedCLIPModel(MegatronModule):
         args = get_args()
          # pretrain function will get the config attribute for all models
         self.config = self.merge_config(text_cfg, vision_cfg)
-        super().__init__(config=self.config, share_embeddings_and_output_weights=not args.untie_embeddings_and_output_weights)
+        super().__init__(config=self.config, share_embeddings_and_output_weights=False)
 
         self.visual = CLIPVisionModel(
                         config=vision_cfg,
