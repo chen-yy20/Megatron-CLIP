@@ -44,6 +44,7 @@ exec python -W ignore \
         --img-h 256 \
         --img-w 256 \
         --v-global-average-pool \
+        $extra_args \
         # --tensorboard-profile \
         # --profile-ranks 12 13 14 15 \
         # --profile-dir logs/v12-t4-12_13_14_15

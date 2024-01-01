@@ -1402,6 +1402,10 @@ def _add_vision_args(parser):
                        help='Number of encoder layers in CLIP Transformer')
     group.add_argument('--v-hidden-size', type=int, default=768,
                        help='Hidden dimension size in CLIP Transformer')
+    group.add_argument('--v-concat-cls-token', action='store_true',
+                          help='Concat CLS tokens from vision')
+    group.add_argument('--v-cls-token-len', type=int, default=8,
+                          help='Length of CLS tokens from vision')
     group.add_argument('--v-seq-length', type=int, default=264,
                        help='The sequence length of vision Transformer for CLIP.')
     group.add_argument('--v-ffn-hidden-size', type=int, default=4*768,
