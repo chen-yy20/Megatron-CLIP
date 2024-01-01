@@ -271,12 +271,15 @@ def forward_step(data_iterator, model):
 
     # print_rank_all(f"input tokens: {tokens.shape} {tokens[:1,:10]}")
     timers('batch-generator').stop()
-    if is_extra_branch_rank():
-        # BERT lm
-        output_tensor = model(tokens,tokens) # 此处一个是stage间输入，一个是text原始输入
-    else:
-        # Vit Backbone
-        output_tensor = model(tokens)
+    # if is_extra_branch_rank():
+    #     # FIXME: 现在貌似没有必要了？
+    #     output_tensor = model(tokens) # 此处一个是stage间输入，一个是text原始输入
+    # else:
+    #     # Vit Backbone
+    #     output_tensor = model(tokens)
+    output_tensor = model(tokens)
+
+
     # print_rank_all(f"finish forward_step, output shape={output_tensor.shape}, dtype={output_tensor.dtype}", False)
     # def hook(gard):
     #     print(f"grad hook:[forward_step finish]: {gard}", flush=True)

@@ -1,13 +1,13 @@
 #!/bin/bash
 set -x
 # model config
-export MODEL_NAME='CLIP'
+export MODEL_NAME='MEGA-CLIP'
 export VISION_L=28
 export TEXT_L=18
 
 # nico config
 export GPUS_PER_NODE='8'
-export NODELIST='nico[2]'
+export NODELIST='nico[1-2]'
 PARTITION='Big'
 
 export NNODES=$(scontrol show hostnames ${NODELIST} | wc -l)
@@ -21,25 +21,25 @@ export TRAIN_SAMPLES=$(( $GLOBAL_BATCH_SIZE * 10))
 export STAGE_MBS=24 # for Indep-modal
 
 # extra setting
-export CHECKPOINT='1'
-export LOG='1'
-export LOG_LEVEL=1 # [0,1,2]
+export CHECKPOINT='0'
+export LOG='0'
+export LOG_LEVEL=2 # [0,1,2]
 
 # Training mode
-export TRAINING_MODE='1' # 0:独立模态 1:混合模态 2:纯DP 3:ZeRO
+export TRAINING_MODE='0' # 0:独立模态 1:混合模态 2:纯DP 3:ZeRO
 
 export extra_args=""
 
 if [ $TRAINING_MODE == '0' ]; then
     export EXP_NAME='Indep'
 
-    export EXTRA_WORLD_SIZE=6
+    export EXTRA_WORLD_SIZE=8
 
-    export TENSOR_MODEL_PARALLEL=2
-    export PIPELINE_MODEL_PARALLEL=1 
+    export TENSOR_MODEL_PARALLEL=1
+    export PIPELINE_MODEL_PARALLEL=2 
 
     export XTENSOR_MODEL_PARALLEL=1
-    export XPIPELINE_MODEL_PARALLEL=2
+    export XPIPELINE_MODEL_PARALLEL=4
 
     if [ $EXTRA_WORLD_SIZE -ge $WORLD_SIZE ]; then
         echo "Error: EXTRA_WORLD_SIZE must be less than WORLD_SIZE."
@@ -111,6 +111,7 @@ if [ $CHECKPOINT == '1' ]; then
     extra_args=" --recompute-activations ${extra_args}"
 fi
 extra_args=" --timing-log-level $LOG_LEVEL ${extra_args}"
+extra_args=" --v-concat-cls-token ${extra_args}"
 
 export MASTER_PORT=$(expr $RANDOM % 10000 + 10000)
 

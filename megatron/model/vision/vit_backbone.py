@@ -281,7 +281,6 @@ class CLIP_VitBackbone(MegatronModule):
                  post_process=True,
                  single_token_output=False,
                  post_layer_norm=True,
-                 class_token = False,
                  drop_path_rate=0.0):
         super().__init__(config=config, share_embeddings_and_output_weights=False)
         args = get_args()
@@ -291,8 +290,7 @@ class CLIP_VitBackbone(MegatronModule):
 
         self.pre_process = pre_process
         self.post_process = post_process
-        # self.class_token = args.v_output_tokens # FIXME
-        self.class_token = class_token
+        self.class_token = args.v_concat_cls_token
         self.post_layer_norm = post_layer_norm
         self.hidden_size = args.v_hidden_size
         self.patch_dim = args.patch_dim
@@ -311,7 +309,9 @@ class CLIP_VitBackbone(MegatronModule):
         self.num_patches_per_dim_h = self.img_h // self.patch_dim
         self.num_patches_per_dim_w = self.img_w // self.patch_dim
         self.num_patches = self.num_patches_per_dim_h * self.num_patches_per_dim_w
-        self.seq_length = self.num_patches + (CLASS_TOKEN_LENGTH if self.class_token else 0)
+        self.seq_length = self.num_patches + (args.v_cls_token_len if self.class_token else 0)
+        print(f"seq_length: {self.seq_length}", flush=True)
+        assert self.seq_length == args.v_seq_length
         self.flatten_dim = self.patch_dim * self.patch_dim * args.num_channels
         self.input_tensor = None
         self.position_ids = None

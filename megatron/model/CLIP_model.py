@@ -165,7 +165,7 @@ class CLIPTextModel(MegatronModule):
     def forward(
         self,
         input_ids,
-        text,   # [batchsize, seq_length]  
+        # text,   # [batchsize, seq_length]  
         labels = None,
     ) -> Tensor:
         # get positional ids 
@@ -185,6 +185,7 @@ class CLIPTextModel(MegatronModule):
 
         if self.post_process:
             output, pooled_output = lm_output
+            # FIXME: 是LanguageModel会完成post_process的工作吗？
             # output = output.permute(1, 0, 2) # [s, b, h] -> [b, s, h]
             # output = self.layernorm(output)
             # take features from the eot embedding (eot_token is the highest number in each sequence)
