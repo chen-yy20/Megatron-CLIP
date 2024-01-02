@@ -7,7 +7,7 @@ export TEXT_L=36
 
 # nico config
 export GPUS_PER_NODE='8'
-export NODELIST='nico[1-2]'
+export NODELIST='nico[1]'
 PARTITION='Big'
 
 export NNODES=$(scontrol show hostnames ${NODELIST} | wc -l)
@@ -61,6 +61,15 @@ if [ $TRAINING_MODE == '0' ]; then
 
     export DATA_PARALLEL_SIZE=$(expr $(($WORLD_SIZE-$EXTRA_WORLD_SIZE)) / $(($TENSOR_MODEL_PARALLEL*$PIPELINE_MODEL_PARALLEL)))
     export XDATA_PARALLEL_SIZE=$(expr $EXTRA_WORLD_SIZE / $(($XTENSOR_MODEL_PARALLEL*$XPIPELINE_MODEL_PARALLEL)))
+    # find suitable STAGE_MBS
+    _upper_bound=3
+    for ((stage_mbs=$(($GLOBAL_BATCH_SIZE / $MICRO_BATCHES + _upper_bound)) ; stage_mbs>0; stage_mbs--)); do
+        if ((stage_mbs % $DATA_PARALLEL_SIZE == 0)) && ((stage_mbs % $XDATA_PARALLEL_SIZE == 0)); then
+            export STAGE_MBS=$stage_mbs
+            echo "find suitable stage_mbs: $stage_mbs"
+            break
+        fi
+    done
     export MICRO_BATCH_SIZE=$(expr $STAGE_MBS / $DATA_PARALLEL_SIZE)
     export XMICRO_BATCH_SIZE=$(expr $STAGE_MBS / $XDATA_PARALLEL_SIZE)
     export GLOBAL_BATCH_SIZE=$(( $STAGE_MBS * $MICRO_BATCHES))
@@ -114,7 +123,7 @@ if [ $CHECKPOINT == '1' ]; then
     extra_args=" --recompute-activations ${extra_args}"
 fi
 extra_args=" --timing-log-level $LOG_LEVEL ${extra_args}"
-extra_args=" --v-concat-cls-token ${extra_args}"
+# extra_args=" --v-concat-cls-token ${extra_args}"
 
 export MASTER_PORT=$(expr $RANDOM % 10000 + 10000)
 

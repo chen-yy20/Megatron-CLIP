@@ -59,6 +59,7 @@ EOT
     --img-h 256 \
     --img-w 256 \
     --v-global-average-pool \
+    --v-concat-cls-token \
     $extra_args \
     # --log-timers-to-tensorboard \
     # --log-memory-to-tensorboard \
