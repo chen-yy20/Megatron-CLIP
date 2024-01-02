@@ -2,12 +2,12 @@
 set -x
 # model config
 export MODEL_NAME='MEGA-CLIP'
-export VISION_L=28
-export TEXT_L=18
+export VISION_L=56
+export TEXT_L=36
 
 # nico config
 export GPUS_PER_NODE='8'
-export NODELIST='nico[1-2]'
+export NODELIST='nico[1]'
 PARTITION='Big'
 
 export NNODES=$(scontrol show hostnames ${NODELIST} | wc -l)
@@ -17,29 +17,30 @@ export WORLD_SIZE=$(($GPUS_PER_NODE*$NNODES))
 export GLOBAL_BATCH_SIZE=1024
 export MICRO_BATCHES=64
 export TRAIN_SAMPLES=$(( $GLOBAL_BATCH_SIZE * 10)) 
-    
+
+# STAGE_MBS will be adjusted when using TRAINING_MODE=1
 export STAGE_MBS=24 # for Indep-modal
 
 # extra setting
 export CHECKPOINT='0'
 export LOG='0'
-export LOG_LEVEL=2 # [0,1,2]
+export LOG_LEVEL=0 # [0,1,2]
 
 # Training mode
-export TRAINING_MODE='1' # 0:独立模态 1:混合模态 2:纯DP 3:ZeRO
+export TRAINING_MODE='0' # 0:独立模态 1:混合模态 2:纯DP 3:ZeRO
 
 export extra_args=""
 
 if [ $TRAINING_MODE == '0' ]; then
     export EXP_NAME='Indep'
 
-    export EXTRA_WORLD_SIZE=8
+    export EXTRA_WORLD_SIZE=4
 
     export TENSOR_MODEL_PARALLEL=1
-    export PIPELINE_MODEL_PARALLEL=2 
+    export PIPELINE_MODEL_PARALLEL=2
 
     export XTENSOR_MODEL_PARALLEL=1
-    export XPIPELINE_MODEL_PARALLEL=4
+    export XPIPELINE_MODEL_PARALLEL=2
 
     if [ $EXTRA_WORLD_SIZE -ge $WORLD_SIZE ]; then
         echo "Error: EXTRA_WORLD_SIZE must be less than WORLD_SIZE."
@@ -58,6 +59,15 @@ if [ $TRAINING_MODE == '0' ]; then
 
     export DATA_PARALLEL_SIZE=$(expr $(($WORLD_SIZE-$EXTRA_WORLD_SIZE)) / $(($TENSOR_MODEL_PARALLEL*$PIPELINE_MODEL_PARALLEL)))
     export XDATA_PARALLEL_SIZE=$(expr $EXTRA_WORLD_SIZE / $(($XTENSOR_MODEL_PARALLEL*$XPIPELINE_MODEL_PARALLEL)))
+    # find suitable STAGE_MBS
+    _upper_bound=3
+    for ((stage_mbs=$(($GLOBAL_BATCH_SIZE / $MICRO_BATCHES + _upper_bound)) ; stage_mbs>0; stage_mbs--)); do
+        if ((stage_mbs % $DATA_PARALLEL_SIZE == 0)) && ((stage_mbs % $XDATA_PARALLEL_SIZE == 0)); then
+            export STAGE_MBS=$stage_mbs
+            echo "find suitable stage_mbs: $stage_mbs"
+            break
+        fi
+    done
     export MICRO_BATCH_SIZE=$(expr $STAGE_MBS / $DATA_PARALLEL_SIZE)
     export XMICRO_BATCH_SIZE=$(expr $STAGE_MBS / $XDATA_PARALLEL_SIZE)
     export GLOBAL_BATCH_SIZE=$(( $STAGE_MBS * $MICRO_BATCHES))
@@ -111,7 +121,7 @@ if [ $CHECKPOINT == '1' ]; then
     extra_args=" --recompute-activations ${extra_args}"
 fi
 extra_args=" --timing-log-level $LOG_LEVEL ${extra_args}"
-extra_args=" --v-concat-cls-token ${extra_args}"
+# extra_args=" --v-concat-cls-token ${extra_args}"
 
 export MASTER_PORT=$(expr $RANDOM % 10000 + 10000)
 

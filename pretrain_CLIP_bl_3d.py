@@ -234,9 +234,6 @@ def forward_step(data_iterator, model):
         data_iterator : Input data iterator
         model (GPTModel): The GPT Model
     """
-    args = get_args()
-    timers = get_timers()
-    rank = torch.distributed.get_rank()
     input_pairs = get_batch(data_iterator)
     output_tensor_dict = model(input_pairs)
     return output_tensor_dict, loss_func
