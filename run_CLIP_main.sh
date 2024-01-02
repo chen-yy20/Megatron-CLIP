@@ -26,7 +26,7 @@ export LOG='0'
 export LOG_LEVEL=2 # [0,1,2]
 
 # Training mode
-export TRAINING_MODE='0' # 0:独立模态 1:混合模态 2:纯DP 3:ZeRO
+export TRAINING_MODE='1' # 0:独立模态 1:混合模态 2:纯DP 3:ZeRO
 
 export extra_args=""
 
@@ -66,8 +66,8 @@ if [ $TRAINING_MODE == '0' ]; then
 
 elif [ $TRAINING_MODE == '1' ]; then
     export EXP_NAME='Mix'
-    export TENSOR_MODEL_PARALLEL=2
-    export PIPELINE_MODEL_PARALLEL=1 
+    export TENSOR_MODEL_PARALLEL=1
+    export PIPELINE_MODEL_PARALLEL=2
 
     if [ $(expr $(($WORLD_SIZE)) % $(($TENSOR_MODEL_PARALLEL*$PIPELINE_MODEL_PARALLEL))) -ne 0 ]; then
         echo "Error: (WORLD_SIZE - EXTRA_WORLD_SIZE) must be divisible by TENSOR_MODEL_PARALLEL * PIPELINE_MODEL_PARALLEL."

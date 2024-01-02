@@ -69,8 +69,9 @@ def get_tensor_shapes(
         for seq_length in seq_lengths:
             tensor_shapes.append((seq_length, micro_batch_size, config.hidden_size))
     else:
-        tensor_shapes.append((seq_lengths[0], micro_batch_size, config.hidden_size))
-        tensor_shapes.append((seq_lengths[1], micro_batch_size, config.v_hidden_size))
+        tensor_shapes.append((seq_lengths[0], micro_batch_size, config.v_hidden_size))
+        tensor_shapes.append((seq_lengths[1], micro_batch_size, config.hidden_size))
+    # print(f"tensor_shapes={tensor_shapes}", flush=True)
     # for seq_length, config in zip(seq_lengths, configs):
     #     tensor_shapes.append((seq_length, micro_batch_size, config.hidden_size))
     return tensor_shapes
@@ -157,9 +158,9 @@ def forward_step(
     passed-in input_tensor is used.
 
     Returns output tensor."""
-    # FIXME just use config0
     if isinstance(config, list):
         config = config[0]
+    # print(f"forward_step start", flush=True)
     if config.timers is not None:
         config.timers('forward-compute', log_level=2).start()
     unwrap_output_tensor = False

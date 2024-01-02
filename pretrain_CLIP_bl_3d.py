@@ -237,10 +237,6 @@ def forward_step(data_iterator, model):
     args = get_args()
     timers = get_timers()
     rank = torch.distributed.get_rank()
-    # Get the batch.
-    timers('batch-generator', log_level=2).start()
-    # print_rank_all("begin get_batch()")
-    
     input_pairs = get_batch(data_iterator)
     output_tensor_dict = model(input_pairs)
     return output_tensor_dict, loss_func
