@@ -278,7 +278,7 @@ def print_rank_all(message, barrier=True):
         if barrier:
             torch.distributed.barrier()
     else:
-        print(message, flush= True)
+        print(message, flush=True)
     if rank == 0 and barrier:
         print("===============================", flush=True)
     
@@ -294,3 +294,18 @@ def print_rank_last(message):
             print(message, flush=True)
     else:
         print(message, flush=True)
+
+
+def calculate_tensor_size_in_bits(tensor):
+    if tensor is None:
+        return 0
+    # 获取张量中元素的总数
+    num_elements = torch.numel(tensor)
+
+    # 获取每个元素的数据类型所占的比特数
+    element_size_in_bits = 8 * tensor.element_size()
+
+    # 计算总的比特数大小
+    total_size_in_bits = num_elements * element_size_in_bits
+
+    return total_size_in_bits

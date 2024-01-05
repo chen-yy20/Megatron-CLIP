@@ -16,7 +16,7 @@ exec python -W ignore \
         --micro-batch-size $MICRO_BATCH_SIZE \
         --v-num-layers $VISION_L \
         --v-hidden-size 1792 \
-        --v-num-attention-heads 8 \
+        --v-num-attention-heads 16 \
         --v-seq-length 264 \
         --num-layers $TEXT_L \
 	--hidden-size 1280 \

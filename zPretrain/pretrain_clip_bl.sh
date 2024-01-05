@@ -13,11 +13,11 @@ exec python -u -W ignore \
 	--tensor-model-parallel-size 1 \
 	--pipeline-model-parallel-size 1 \
         --micro-batch-size $MICRO_BATCH_SIZE \
-	--v-num-layers 28 \
+	--v-num-layers $VISION_L \
         --v-hidden-size 1792 \
-        --v-num-attention-heads 8 \
+        --v-num-attention-heads 16 \
         --v-seq-length 264 \
-        --num-layers 18 \
+        --num-layers $TEXT_L \
 	--hidden-size 1280 \
         --num-attention-heads 20 \
         --seq-length 77 \

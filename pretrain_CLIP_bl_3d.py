@@ -28,11 +28,12 @@ from megatron.arguments import core_transformer_config_from_args, \
 # # )
 from megatron.model import CLIP_model
 
+
 # load dataset
 from open_CLIP.src.open_clip.factory import get_tokenizer
 from open_CLIP.src.training.data import get_wds_dataset
 from megatron.data.vit_dataset import ClassificationTransform
-
+from deepspeed.runtime.utils import see_memory_usage
 
 # Get data
 
@@ -51,7 +52,7 @@ def model_provider(pre_process=True, post_process=True):
         post_process=post_process,
     )
     model.to(torch.cuda.current_device())
-
+    see_memory_usage(f"after building CLIP model", force=True)
     return model
 
 
@@ -238,7 +239,7 @@ def forward_step(data_iterator, model):
     timers = get_timers()
     rank = torch.distributed.get_rank()
     # Get the batch.
-    timers('batch-generator', log_level=2).start()
+    # timers('batch-generator', log_level=2).start()
     # print_rank_all("begin get_batch()")
     
     input_pairs = get_batch(data_iterator)

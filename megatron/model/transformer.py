@@ -1520,7 +1520,7 @@ class ParallelTransformer(MegatronModule):
             # print(f"\nRank={torch.distributed.get_rank()}: get {self.num_layers} layers for stage {mpu.get_pipeline_model_parallel_rank()}, offset={imbalance_offset}", flush=True)
         else:
             self.num_layers = layers
-            print(f"\nRank={torch.distributed.get_rank()}: get {self.num_layers} layers for stage {mpu.get_pipeline_model_parallel_rank()}", flush=True)
+            # print(f"\nRank={torch.distributed.get_rank()}: get {self.num_layers} layers for stage {mpu.get_pipeline_model_parallel_rank()}", flush=True)
     
         # 不同层丢弃神经元连接的概率，以列表方式储存，一般靠近输入droppath小，靠近输出droppath大
         self.drop_path_rates = [
@@ -1765,7 +1765,7 @@ class ParallelTransformer(MegatronModule):
         if inference_params:
             assert self.recompute_granularity is None, \
                 'inference does not work with activation checkpointing'
-
+        # Not the first stage, use the input tensor received from set_input_tensor()
         if not self.pre_process:
             # See set_input_tensor()
             hidden_states = self.input_tensor

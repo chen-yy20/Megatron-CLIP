@@ -280,7 +280,7 @@ class CombinedCLIPModel(MegatronModule):
                     result_dict[prefix_2+key] = vision_dict[key]
             else:
                 result_dict[key] = value
-        print(f"result_dict: {result_dict}", flush=True)
+        # print(f"result_dict: {result_dict}", flush=True)
 
         def create_dataclass_from_dict(class_name, input_dict):
             # TODO: 有通信的优化空间？

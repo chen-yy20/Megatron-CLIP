@@ -200,7 +200,7 @@ def _initialize_distributed():
     else:
         torch.distributed.init_process_group(
             backend=args.distributed_backend,
-            world_size=args.world_size + args.extra_world_size,
+            world_size=args.world_size,
             rank=args.rank,
             timeout=timedelta(minutes=args.distributed_timeout_minutes),
         )

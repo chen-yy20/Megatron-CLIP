@@ -150,7 +150,7 @@ def pretrain(train_valid_test_dataset_provider,
 
     if args.deepspeed:
         args.deepspeed_config_dict = _create_ds_config_dict()
-        print(f"args.deepspeed_config_dict: {args.deepspeed_config_dict},如果是None可以删除了", flush=True)
+        # print(f"args.deepspeed_config_dict: {args.deepspeed_config_dict},如果是None可以删除了", flush=True)
 
     # Model, optimizer, and learning rate.
     timers('model-and-optimizer-setup', log_level=0).start(barrier=True)

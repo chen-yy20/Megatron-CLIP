@@ -5,6 +5,7 @@ from functools import reduce
 from typing import Callable, List, Optional, Tuple, Union
 
 import torch
+import time
 
 from megatron import core
 from megatron.core import ModelParallelConfig
@@ -13,7 +14,9 @@ from megatron.core.parallel_state import (
     get_pipeline_model_parallel_next_rank,
     get_pipeline_model_parallel_prev_rank,
     get_pipeline_model_parallel_rank,
+    get_rank_node
 )
+from megatron.utils import calculate_tensor_size_in_bits
 
 # Types
 Shape = Union[List[int], torch.Size]
@@ -159,6 +162,7 @@ def _batched_p2p_ops(
         )
         ops.append(recv_next_op)
     if len(ops) > 0:
+        # 使用批处理的p2p通信
         reqs = torch.distributed.batch_isend_irecv(ops)
     else:
         reqs = []
@@ -175,6 +179,7 @@ def _p2p_ops(
 ):
     reqs = []
     rank = get_pipeline_model_parallel_rank()
+    # 流水线奇偶数的区分：流水线相邻阶段：一发一收， 通信顺序不相同
     if get_pipeline_model_parallel_rank() % 2 == 0:
         if tensor_send_next is not None:
             send_next_req = torch.distributed.isend(
@@ -325,6 +330,36 @@ def _communicate(
         p2p_func = _batched_p2p_ops
     else:
         p2p_func = _p2p_ops
+    # print(f"--PP Rank {rank} _communicate: \
+    #         t_s_prev {tensor_send_prev.shape if tensor_send_prev is not None else None}| \
+    #         t_r_prev {tensor_recv_prev.shape if tensor_recv_prev is not None else None}| \
+    #         t_s_next {tensor_send_next.shape if tensor_send_next is not None else None}| \
+    #         t_r_next {tensor_recv_next.shape if tensor_recv_next is not None else None}", flush=True)
+    
+    if config.slow_down:
+        curr_rank = torch.distributed.get_rank()
+        curr_node = get_rank_node(curr_rank)
+        size = 0
+        target_rank = ''
+        if tensor_send_prev is not None:
+            prev_rank = get_pipeline_model_parallel_prev_rank()
+            prev_node = get_rank_node(prev_rank)
+            if prev_node != curr_node:
+                size += calculate_tensor_size_in_bits(tensor_send_prev)
+                target_rank += f"{prev_rank} "
+        if tensor_send_next is not None:
+            next_rank = get_pipeline_model_parallel_next_rank()
+            next_node = get_rank_node(next_rank)
+            if next_node != curr_node:
+                size += calculate_tensor_size_in_bits(tensor_send_next) 
+                target_rank += f"{next_rank} "
+        if size != 0:
+            ori_send_time = size / (7 * 1024**3 * 8)  # 7G Bytes/s
+            new_send_time = size / (640 * 1024**2) # 640M bits/s
+            sleep_time = new_send_time - ori_send_time
+            # print(f"Rank {curr_rank} send to {target_rank} sleep {sleep_time}s", flush=True)
+            time.sleep(sleep_time)
+        
 
     reqs = p2p_func(
         tensor_send_prev=tensor_send_prev,

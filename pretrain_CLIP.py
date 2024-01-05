@@ -33,7 +33,7 @@ import argparse
 from open_CLIP.src.open_clip.factory import get_tokenizer
 from open_CLIP.src.training.data import get_wds_dataset
 from megatron.data.vit_dataset import ClassificationTransform
-
+from deepspeed.runtime.utils import see_memory_usage
 
 # Get data
 
@@ -62,7 +62,7 @@ def model_provider(pre_process=True, post_process=True):
             add_pooler = True,
             text_projection = True,
         ).to("cuda")
-
+    see_memory_usage(f"after building CLIP model", force=True)
     return model
 
 
@@ -209,7 +209,7 @@ def loss_func(output):
     # print_rank_all(f"gathered tensor={[t.shape for t in combine_output]}", False)
     # print_rank_all(f"gathered tensor req. gradient={[t.requires_grad for t in combine_output]}", False)
 
-    image_world_size = args.world_size
+    image_world_size = args.world_size - args.extra_world_size
     text_world_size = args.extra_world_size
     loss_ranks = parallel_state.get_pipeline_model_parallel_loss_rank()
     image_loss_ranks = [r for r in loss_ranks if r < image_world_size]
@@ -271,12 +271,6 @@ def forward_step(data_iterator, model):
 
     # print_rank_all(f"input tokens: {tokens.shape} {tokens[:1,:10]}")
     timers('batch-generator').stop()
-    # if is_extra_branch_rank():
-    #     # FIXME: 现在貌似没有必要了？
-    #     output_tensor = model(tokens) # 此处一个是stage间输入，一个是text原始输入
-    # else:
-    #     # Vit Backbone
-    #     output_tensor = model(tokens)
     output_tensor = model(tokens)
 
 

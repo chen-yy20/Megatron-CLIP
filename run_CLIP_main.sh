@@ -2,8 +2,8 @@
 set -x
 # model config
 export MODEL_NAME='MEGA-CLIP'
-export VISION_L=28
-export TEXT_L=18
+export VISION_L=84
+export TEXT_L=36
 
 # nico config
 export GPUS_PER_NODE='8'
@@ -14,32 +14,35 @@ export NNODES=$(scontrol show hostnames ${NODELIST} | wc -l)
 export WORLD_SIZE=$(($GPUS_PER_NODE*$NNODES))
 
 # Batch size
-export GLOBAL_BATCH_SIZE=1024
-export MICRO_BATCHES=64
+export GLOBAL_BATCH_SIZE=64
+export MICRO_BATCHES=4
+export STAGE_MBS=16 # for Indep-modal, 需要是DP和xDP的公倍数
+
+
 export TRAIN_SAMPLES=$(( $GLOBAL_BATCH_SIZE * 10)) 
     
-export STAGE_MBS=24 # for Indep-modal
+
 
 # extra setting
-export CHECKPOINT='0'
+export CHECKPOINT='1'
 export LOG='0'
-export LOG_LEVEL=2 # [0,1,2]
+export LOG_LEVEL=0 # [0,1,2]
 
 # Training mode
-export TRAINING_MODE='0' # 0:独立模态 1:混合模态 2:纯DP 3:ZeRO
+export TRAINING_MODE='1' # 0:独立模态 1:混合模态 2:纯DP 3:ZeRO
 
 export extra_args=""
 
 if [ $TRAINING_MODE == '0' ]; then
     export EXP_NAME='Indep'
 
-    export EXTRA_WORLD_SIZE=8
+    export EXTRA_WORLD_SIZE=4
 
-    export TENSOR_MODEL_PARALLEL=1
-    export PIPELINE_MODEL_PARALLEL=2 
+    export TENSOR_MODEL_PARALLEL=2
+    export PIPELINE_MODEL_PARALLEL=6 
 
     export XTENSOR_MODEL_PARALLEL=1
-    export XPIPELINE_MODEL_PARALLEL=4
+    export XPIPELINE_MODEL_PARALLEL=2
 
     if [ $EXTRA_WORLD_SIZE -ge $WORLD_SIZE ]; then
         echo "Error: EXTRA_WORLD_SIZE must be less than WORLD_SIZE."
@@ -66,8 +69,8 @@ if [ $TRAINING_MODE == '0' ]; then
 
 elif [ $TRAINING_MODE == '1' ]; then
     export EXP_NAME='Mix'
-    export TENSOR_MODEL_PARALLEL=2
-    export PIPELINE_MODEL_PARALLEL=1 
+    export TENSOR_MODEL_PARALLEL=4
+    export PIPELINE_MODEL_PARALLEL=4
 
     if [ $(expr $(($WORLD_SIZE)) % $(($TENSOR_MODEL_PARALLEL*$PIPELINE_MODEL_PARALLEL))) -ne 0 ]; then
         echo "Error: (WORLD_SIZE - EXTRA_WORLD_SIZE) must be divisible by TENSOR_MODEL_PARALLEL * PIPELINE_MODEL_PARALLEL."
@@ -93,7 +96,7 @@ elif [ $TRAINING_MODE == '2' ]; then
 
 elif [ $TRAINING_MODE == '3' ]; then
     export EXP_NAME='ZeRO'
-    export ZERO_STAGE='1'
+    export ZERO_STAGE='2'
 
     export DATA_PARALLEL_SIZE=$(($GPUS_PER_NODE*$NNODES))
     export MICRO_BATCH_SIZE=$(expr $GLOBAL_BATCH_SIZE / $(($DATA_PARALLEL_SIZE*$MICRO_BATCHES)))
@@ -121,6 +124,7 @@ if [ $LOG == '1' ]; then
     mkdir -p ./logs/${LOG_DIR}
     if [ $TRAINING_MODE == '0' ]; then
         srun \
+        -A big \
         --exclusive=user \
         -p $PARTITION \
         -K \
@@ -179,6 +183,7 @@ elif [ $LOG == '0' ]; then
     if [ $TRAINING_MODE == '0' ]; then
         srun \
         --exclusive=user \
+        -A big \
         -p $PARTITION \
         -K \
         -N $NNODES \
@@ -193,6 +198,7 @@ elif [ $LOG == '0' ]; then
     elif [ $TRAINING_MODE == '1' ]; then
         srun \
         --exclusive=user \
+        -A big \
         -p $PARTITION \
         -K \
         -N $NNODES \
@@ -207,6 +213,7 @@ elif [ $LOG == '0' ]; then
     elif [ $TRAINING_MODE == '2' ]; then
         srun \
         --exclusive=user \
+        -A big \
         -p $PARTITION \
         -K \
         -N $NNODES \
@@ -221,6 +228,7 @@ elif [ $LOG == '0' ]; then
     elif [ $TRAINING_MODE == '3' ]; then
         srun \
         --exclusive=user \
+        -A big \
         -p $PARTITION \
         -K \
         -N $NNODES \

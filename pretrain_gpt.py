@@ -82,7 +82,6 @@ def get_batch(data_iterator):
     """Generate a batch."""
     args = get_args()
     tokenizer = get_tokenizer()
-    print(f"Rank {args.rank}: Begin get_batch", flush=True)
     # Items and their type.
     keys = ['text']
     datatype = torch.int64
@@ -144,7 +143,6 @@ def forward_step(data_iterator, model: GPTModel):
     """
     args = get_args()
     timers = get_timers()
-    print(f"Rank {args.rank}: Begin forward_step", flush=True)
     # Get the batch.
     timers('batch-generator', log_level=2).start()
 

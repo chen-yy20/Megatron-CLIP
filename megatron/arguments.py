@@ -60,21 +60,23 @@ def parse_args(extra_args_provider=None, ignore_unknown_args=False):
     # Args from environment
     args.rank = int(os.getenv('RANK', '0'))
     # world size retrieved from torch.distributed environment
-    args.world_size = int(os.getenv("WORLD_SIZE", '1')) - args.extra_world_size
+    args.world_size = int(os.getenv("WORLD_SIZE", '1'))
+    print(f"args.world_size {args.world_size}", flush=True)
 
     return args
 
 def validate_args(args, defaults={}):
     # Tensor model parallel size.
+    ori_world_size = args.world_size - args.extra_world_size
     args.tensor_model_parallel_size = min(
-        args.tensor_model_parallel_size, args.world_size)
-    assert args.world_size % args.tensor_model_parallel_size == 0, 'world size'\
+        args.tensor_model_parallel_size, ori_world_size)
+    assert ori_world_size % args.tensor_model_parallel_size == 0, 'world size'\
         ' ({}) is not divisible by tensor model parallel size ({})'.format(
-            args.world_size, args.tensor_model_parallel_size)
+            ori_world_size, args.tensor_model_parallel_size)
     # Pipeline model parallel size.
     args.pipeline_model_parallel_size = min(
         args.pipeline_model_parallel_size,
-        (args.world_size // args.tensor_model_parallel_size))
+        (ori_world_size // args.tensor_model_parallel_size))
     args.transformer_pipeline_model_parallel_size = (
         args.pipeline_model_parallel_size - 1
         if args.standalone_embedding_stage else
@@ -93,18 +95,18 @@ def validate_args(args, defaults={}):
     # Checks.
     model_parallel_size = args.pipeline_model_parallel_size * \
                           args.tensor_model_parallel_size
-    assert args.world_size % model_parallel_size == 0, 'world size ({}) is not'\
+    assert ori_world_size % model_parallel_size == 0, 'world size ({}) is not'\
         ' divisible by tensor parallel size ({}) times pipeline parallel ' \
-        'size ({})'.format(args.world_size, args.tensor_model_parallel_size,
+        'size ({})'.format(ori_world_size, args.tensor_model_parallel_size,
                            args.pipeline_model_parallel_size)
-    args.data_parallel_size = args.world_size // model_parallel_size # 不用设定，因为可以算出来
+    args.data_parallel_size = ori_world_size // model_parallel_size # 不用设定，因为可以算出来
     args.xdata_parallel_size = args.extra_world_size // \
         (args.xpipeline_model_parallel_size * args.xtensor_model_parallel_size)
     if args.rank == 0:
         print('using world size: {}, data-parallel-size: {}, '
               'tensor-model-parallel size: {}, '
               'pipeline-model-parallel size: {} '.format(
-                  args.world_size, args.data_parallel_size,
+                  ori_world_size, args.data_parallel_size,
                   args.tensor_model_parallel_size,
                   args.pipeline_model_parallel_size), flush=True)
     if args.pipeline_model_parallel_size > 1:
@@ -471,6 +473,8 @@ def core_transformer_config_from_args(args):
         kw_args['num_query_groups'] = args.num_query_groups
     else:
         kw_args['num_query_groups'] = None
+    if args.slow_down:
+        kw_args['slow_down'] = True
 
     return TransformerConfig(**kw_args)
 
@@ -1199,6 +1203,10 @@ def _add_distributed_args(parser):
                        help='Use distributed optimizer.')
     group.add_argument('--expert-model-parallel-size', type=int, default=1,
                        help='Degree of expert model parallelism.')
+    
+    # 跨数据中心通信模拟
+    group.add_argument('--slow-down', action='store_true',
+                       default=None, help="If set, Internode comm speed will be slow down to 640Mbps.")
 
     return parser
 
