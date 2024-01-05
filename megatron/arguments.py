@@ -477,6 +477,8 @@ def core_transformer_config_from_args(args):
         kw_args['slow_down'] = True
     if args.bidirectional_pipeline:
         kw_args['down_or_up'] = 'up'
+    if args.slow_down:
+        kw_args['slow_down'] = True
 
     return TransformerConfig(**kw_args)
 
