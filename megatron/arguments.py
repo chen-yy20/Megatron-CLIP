@@ -471,6 +471,8 @@ def core_transformer_config_from_args(args):
         kw_args['num_query_groups'] = args.num_query_groups
     else:
         kw_args['num_query_groups'] = None
+    if args.bidirectional_pipeline:
+        kw_args['down_or_up'] = 'up'
 
     return TransformerConfig(**kw_args)
 
@@ -516,6 +518,8 @@ def clip_vision_transformer_config_from_args(args):
     kw_args['kv_channels'] = args.v_kv_channels
     kw_args['hidden_dropout'] = args.v_hidden_dropout
     kw_args['attention_dropout'] = args.v_attention_dropout
+    if args.bidirectional_pipeline:
+        kw_args['down_or_up'] = 'down'
     # ==============================================================
           
     kw_args['persist_layer_norm'] = not args.no_persist_layer_norm
@@ -1142,6 +1146,8 @@ def _add_distributed_args(parser):
     group.add_argument('--uniform-modility', action='store_true',
                        help='Naive model parallelism for multimodal encoder, which' + 
                        'divides all modal branches uniformly if specified.')
+    group.add_argument('--bidirectional-pipeline', action='store_true',
+                       help='Place multimodal pipelines among a set of devies bidirectionally.')
 
     group.add_argument('--tensor-model-parallel-size', type=int, default=1,
                        help='Degree of tensor model parallelism.')

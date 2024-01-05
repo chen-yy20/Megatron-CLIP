@@ -159,7 +159,9 @@ class TransformerConfig(ModelParallelConfig):
     attention_softmax_in_fp32: bool = True
 
     # communication
-
+    # pipeline direction
+    down_or_up: str = 'down'
+    
     # fusion
     bias_gelu_fusion: bool = False  # TODO: this should be bias_activation_fusion ?
     masked_softmax_fusion: bool = False

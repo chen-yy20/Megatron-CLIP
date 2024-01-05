@@ -1,0 +1,16 @@
+{
+  "train_batch_size" : 192,
+  "train_micro_batch_size_per_gpu": 3,
+  "steps_per_print": 1,
+
+  "zero_optimization": {
+    "stage": 1
+  },
+
+  "fp16": {
+    "enabled": false,
+    "initial_scale_power": 12
+  },
+
+  "wall_clock_breakdown" : true
+}
