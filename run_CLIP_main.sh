@@ -7,7 +7,7 @@ export TEXT_L=36
 
 # nico config
 export GPUS_PER_NODE='8'
-export NODELIST='nico[1]'
+export NODELIST='nico[2]'
 PARTITION='Big'
 
 export NNODES=$(scontrol show hostnames ${NODELIST} | wc -l)
@@ -117,6 +117,21 @@ elif [ $TRAINING_MODE == '3' ]; then
     extra_args=" --deepspeed ${extra_args}"
     extra_args=" --deepspeed_config=$DS_CONFIG ${extra_args}"
     extra_args=" --zero-stage=$ZERO_STAGE ${extra_args}"
+
+elif [ $TRAINING_MODE == '4' ]; then
+    export EXP_NAME='Flexpipe'
+    export TENSOR_MODEL_PARALLEL=1
+    export PIPELINE_MODEL_PARALLEL=4
+
+    if [ $(expr $(($WORLD_SIZE)) % $(($TENSOR_MODEL_PARALLEL*$PIPELINE_MODEL_PARALLEL))) -ne 0 ]; then
+        echo "Error: (WORLD_SIZE - EXTRA_WORLD_SIZE) must be divisible by TENSOR_MODEL_PARALLEL * PIPELINE_MODEL_PARALLEL."
+        exit 1
+    fi
+    export DATA_PARALLEL_SIZE=$(expr $WORLD_SIZE / $(($TENSOR_MODEL_PARALLEL*$PIPELINE_MODEL_PARALLEL)))
+    export MICRO_BATCH_SIZE=$(expr $GLOBAL_BATCH_SIZE / $(($DATA_PARALLEL_SIZE*$MICRO_BATCHES)))
+    LOG_DIR=${EXP_NAME}\_TP$TENSOR_MODEL_PARALLEL\_PP$PIPELINE_MODEL_PARALLEL\_DP$DATA_PARALLEL_SIZE\_gbs$GLOBAL_BATCH_SIZE\_mbs$MICRO_BATCH_SIZE
+    LOG_NAME=${MODEL_NAME}\_tL$TEXT_L\_vL$VISION_L\_mbs$MICRO_BATCH_SIZE\_$(date -Iseconds).log
+    extra_args=" --bidirectional-pipeline ${extra_args}"
 fi
 
 if [ $CHECKPOINT == '1' ]; then
@@ -248,6 +263,19 @@ elif [ $LOG == '0' ]; then
         --gres=gpu:$GPUS_PER_NODE \
         --export=ALL \
         bash zPretrain/pretrain_clip_ds.sh
+    elif [ $TRAINING_MODE == '4' ]; then
+        srun \
+        --exclusive=user \
+        -p $PARTITION \
+        -K \
+        -N $NNODES \
+        -w $NODELIST \
+        --time 20:00 \
+        --job-name=MegaCLIP \
+        --ntasks-per-node=$GPUS_PER_NODE \
+        --gres=gpu:v132p:$GPUS_PER_NODE \
+        --export=ALL \
+        bash zPretrain/pretrain_clip_flexpipe.sh
     fi
 
 fi

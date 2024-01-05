@@ -1388,6 +1388,36 @@ def _get_num_layers(args, model_type, is_decoder=False, modality=None):
                 and mpu.get_pipeline_model_parallel_rank() == 0 else
                 total_num_layers // args.transformer_pipeline_model_parallel_size
             )
+            #### 8-cards hack
+            # self_rank = mpu.get_pipeline_model_parallel_rank()
+            # offset = 0
+            # if modality == "image":
+            #     if self_rank == 0:
+            #         num_layers = 14
+            #         offset = 0
+            #     elif self_rank == 1:
+            #         num_layers = 14
+            #         offset = 14
+            #     elif self_rank == 2:
+            #         num_layers = 14
+            #         offset = 28
+            #     elif self_rank == 3:
+            #         num_layers = 14
+            #         offset = 42
+            # elif modality == "text":
+            #     if self_rank == 0:
+            #         num_layers = 8
+            #         offset = 0
+            #     elif self_rank == 1:
+            #         num_layers = 8
+            #         offset = 8
+            #     elif self_rank == 2:
+            #         num_layers = 10
+            #         offset = 16
+            #     elif self_rank == 3:
+            #         num_layers = 10
+            #         offset = 26
+            # return (num_layers, offset)
     # 没有流水线并行
     else:
         if not is_decoder:

@@ -121,8 +121,10 @@ def pretrain(train_valid_test_dataset_provider,
     timers('model-and-optimizer-setup').stop()
     print_datetime('after model, optimizer, and learning rate '
                    'scheduler are built')
-    config = get_model_config(model[0])
-    
+    if isinstance(model, list):
+        config = [get_model_config(m) for m in model]
+    else:
+        config = get_model_config(model)
     # Data stuff.
     timers('train/valid/test-data-iterators-setup', log_level=0).start(
         barrier=True)
@@ -334,8 +336,7 @@ def get_model(model_provider_func, model_type=ModelType.encoder_or_decoder, wrap
         model = [Float16Module(model_module, args) for model_module in model]
 
     if wrap_with_ddp:
-        config = get_model_config(model[0])
-        model = [DDP(config,
+        model = [DDP(get_model_config(model_module),
                      model_module,
                      data_parallel_group=mpu.get_data_parallel_group(),
                      accumulate_allreduce_grads_in_fp32=args.accumulate_allreduce_grads_in_fp32,
@@ -457,6 +458,12 @@ def train_step(forward_step_func, data_iterator,
         from megatron.core.pipeline_parallel.flex_schedules import \
             uniform_forward_backward_pipelining_without_interleaving
         forward_backward_func = uniform_forward_backward_pipelining_without_interleaving
+    elif args.bidirectional_pipeline is True:
+        self_micro_batch_size = args.micro_batch_size
+        self_seq_length = [args.v_seq_length, args.seq_length]
+        from megatron.core.pipeline_parallel.flex_schedules import \
+            forward_backward_bidirectional_pipelining
+        forward_backward_func = forward_backward_bidirectional_pipelining
     elif mpu.has_extra_branch():
         # Divid multimodal branches into different devices.
         self_micro_batch_size = args.xmicro_batch_size if mpu.is_extra_branch_rank() else \
@@ -759,11 +766,10 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
     # Iterations.
     iteration = args.iteration
 
-    # Setup some training config params
+    # For the uniform mode, we combine the list
     combined_config = None
     if isinstance(config, list):
         combined_config = config
-         # FIXME currently use the first config
         config = config[0]
     config.grad_scale_func = optimizer.scale_loss
     config.timers = timers
