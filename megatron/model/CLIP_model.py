@@ -320,7 +320,6 @@ class CombinedCLIPModel(MegatronModule):
         text_tokens = combine_input['text']
         # image_token: torch.float32, text_tokens: torch.int32
         image_features = self.visual(image_tokens)
-        text_features = self.text(text_tokens, text_tokens)
-        from megatron import print_rank_all
+        text_features = self.text(text_tokens)
         # print_rank_all(f"image_features: {image_features.shape}, text_features: {text_features.shape}")
         return {'image':image_features, 'text':text_features}

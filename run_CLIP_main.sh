@@ -7,7 +7,7 @@ export TEXT_L=36
 
 # nico config
 export GPUS_PER_NODE='8'
-export NODELIST='nico[2]'
+export NODELIST='nico[1-2]'
 PARTITION='Big'
 
 export NNODES=$(scontrol show hostnames ${NODELIST} | wc -l)
