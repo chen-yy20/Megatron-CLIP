@@ -95,7 +95,8 @@ class AutoGeneratePipelineRank:
                         sync_list[next_data[pipeline.micro_batch_ids[-1]] %
                                   self.stage_numbers].append(f"{up_or_down_str}s")
                     # FIXME: add not_finished
-                    not_finished = (self.micro_batch_numbers - self.push_micro_batch) > 0 
+                    not_finished = (self.micro_batch_numbers - self.push_micro_batch) > 0 if self.stage_numbers == 2 else False
+                    # not_finished = False
                     if is_pop and (pipeline.has_next_pass() or not_finished): # 已经有微批次走完了一轮流水线，且还有下一轮
                         micro_num = self.stage_numbers//(2 *
                                                          self.pipeline_numbers)
@@ -115,13 +116,15 @@ class AutoGeneratePipelineRank:
                             self.push_pipeline_numbers[direction] += 1
 
                     next_flag = True
-            # print(f"schedule {schedule} | schedule_up_down {schedule_up_down} | sub {sub_schedule}")
+            print(f"schedule {schedule} | schedule_up_down {schedule_up_down} | sub {sub_schedule}")
             self.total_cnt += 1
             temp_mb_ids = []
-            for mb_list in schedule:
+            for idex, mb_list in enumerate(schedule):
                 if len(mb_list) == self.total_cnt:
                     temp_mb_ids.append(mb_list[-1])
                 else:
+                    if idex == 0:
+                        print(f"{self.total_cnt}: {len(mb_list)}")
                     temp_mb_ids.append("")
 
             # 如果有同步信息且当前步骤的 sub_schedule 中有空位，将同步信息填充到空位中。
@@ -200,13 +203,13 @@ class MyPipeLine:
         # FIXME:micro_batch_id = ((self.pipeline_id//2)*self.stage_numbers) # 0
         # micro_batch_id += (0 if self.up_or_down else self.stage_numbers//2) # 0 2
         micro_batch_id = (0 if self.up_or_down else self.stage_numbers//2) # 0 2
-        # print("初始化！====================================")
+        print("初始化！====================================")
         for x in range(self.micro_batch_numbers): # 每条流水线分别处理一半的micro batch
             # FIXME:self.micro_batch_ids.append(
             #     x+(self.pipeline_id % self.pipeline_numbers)*(self.stage_numbers//self.pipeline_numbers //2)+micro_batch_id)
             self.micro_batch_ids.append(
                 x+(self.pipeline_id)*(self.stage_numbers//self.pipeline_numbers)+micro_batch_id)
-        # print(f"id {self.pipeline_id} | p_num {self.pipeline_numbers} | mb_id {micro_batch_id} | micro_batch_ids {self.micro_batch_ids}")
+        print(f"id {self.pipeline_id} | p_num {self.pipeline_numbers} | mb_id {micro_batch_id} | micro_batch_ids {self.micro_batch_ids}")
         start_stage_device = (self.pipeline_id % self.pipeline_numbers) * \
             (self.stage_numbers // self.pipeline_numbers)
         self.devices = [x for x in self.module_to_stage_map[start_stage_device:] +
@@ -238,6 +241,7 @@ class MyPipeLine:
         pop_one = False
         for micro_batch in over_back_micro_batch:
             self.micro_batch_device.pop(micro_batch) # 将 over_back_micro_batch 列表中的微批次从 micro_batch_device 中删除，表示已经完成了一轮流水线的前进或后退。
+            print(f"{micro_batch} is popped.")
             pop_one = True
 
         if self.steps % 2 == 0: # 偶数步往micro_batch_device中添加新的微批次
@@ -268,7 +272,7 @@ def backward(index, up_or_down):
 if __name__ == "__main__":
     stage_num = 4
     pipeline_num = 2
-    micro_num = 7
+    micro_num = 20
     print(f"stage:{stage_num}  pipeline_num:{pipeline_num} micro_num:{micro_num}")
     pipeline = AutoGeneratePipelineRank(stage_num, pipeline_num, micro_num)
     # generate intstruction
