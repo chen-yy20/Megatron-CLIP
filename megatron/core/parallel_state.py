@@ -116,7 +116,8 @@ def initialize_model_parallel(
     use_sharp: bool = False,
     context_parallel_size: int = 1,
     expert_model_parallel_size: int = 1,
-    bidirectional_pipeline=False
+    bidirectional_pipeline=False,
+    bidirectional_pipeline_size=1
 ) -> None:
     """Initialize model data parallel groups.
 
@@ -553,7 +554,7 @@ def initialize_model_parallel(
         # if tuple(ranks) not in _ALL_PIPELINE_MODEL_PARALLEL_GROUPS:
         #     _ALL_PIPELINE_MODEL_PARALLEL_GROUPS[tuple(ranks)] = group
         if bidirectional_pipeline:
-            loss_rank.append(list(ranks)[0])
+            loss_rank.append(list(ranks)[pipeline_model_parallel_size - bidirectional_pipeline_size])
         loss_rank.append(list(ranks)[-1])
         if rank in ranks:
             _PIPELINE_MODEL_PARALLEL_GROUP = group
@@ -600,7 +601,7 @@ def initialize_model_parallel(
             # if tuple(ranks) not in _ALL_PIPELINE_MODEL_PARALLEL_GROUPS:
             #     _ALL_PIPELINE_MODEL_PARALLEL_GROUPS[tuple(ranks)] = group
             if bidirectional_pipeline:
-                loss_rank.append(list(ranks)[0])
+                loss_rank.append(list(ranks)[pipeline_model_parallel_size - bidirectional_pipeline_size])
             loss_rank.append(list(ranks)[-1])
             if rank in ranks:
                 _PIPELINE_MODEL_PARALLEL_GROUP = group
@@ -986,8 +987,11 @@ def get_pipeline_model_parallel_rank(config=None):
         return _MPU_PIPELINE_MODEL_PARALLEL_RANK
     if config is not None and hasattr(config, "down_or_up"):
         if config.down_or_up == "up":
-            return get_pipeline_model_parallel_world_size() - \
+            mirror_rank = get_pipeline_model_parallel_world_size() - \
                 torch.distributed.get_rank(group=get_pipeline_model_parallel_group()) - 1
+            if mirror_rank >= config.bidirectional_pipeline_size:
+                mirror_rank = None
+            return mirror_rank
     return torch.distributed.get_rank(group=get_pipeline_model_parallel_group())
 
 
@@ -1018,6 +1022,9 @@ def is_pipeline_last_stage(ignore_virtual=False, config=None):
             virtual_pipeline_model_parallel_world_size - 1
         ):
             return False
+    if config is not None and hasattr(config, "down_or_up"):
+        if config.down_or_up == "up":
+            return get_pipeline_model_parallel_rank(config=config) == (config.bidirectional_pipeline_size - 1)
     return get_pipeline_model_parallel_rank(config=config) == (get_pipeline_model_parallel_world_size() - 1)
 
 
@@ -1147,7 +1154,8 @@ def get_pipeline_model_parallel_last_rank(config=None):
     last_rank_local = get_pipeline_model_parallel_world_size() - 1
     if config is not None and hasattr(config, "down_or_up"):
         if config.down_or_up == "up":
-            return _PIPELINE_GLOBAL_RANKS[0]
+            return _PIPELINE_GLOBAL_RANKS[get_pipeline_model_parallel_world_size() - 
+                                          config.bidirectional_pipeline_size]
     return _PIPELINE_GLOBAL_RANKS[last_rank_local]
 
 

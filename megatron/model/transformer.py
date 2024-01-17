@@ -1376,6 +1376,11 @@ def _get_num_layers(args, model_type, is_decoder=False, modality=None):
                 assert modality in ["image", "text"], "Currently support image and text."
                 if modality == "image":
                     total_num_layers = args.v_num_layers
+                if args.bidirectional_pipeline and modality == "text":
+                    pipeline_model_pipeline_size = args.bidirectional_pipeline_size
+                else:
+                    pipeline_model_pipeline_size = args.transformer_pipeline_model_parallel_size
+                    
             # When a standalone embedding stage is used, all transformer layers
             # are divided among pipeline rank >= 1, while on pipeline rank 0,
             # ranks either contain the input embedding layer (virtual pp rank 0),
@@ -1386,37 +1391,37 @@ def _get_num_layers(args, model_type, is_decoder=False, modality=None):
                 0
                 if args.standalone_embedding_stage
                 and mpu.get_pipeline_model_parallel_rank() == 0 else
-                total_num_layers // args.transformer_pipeline_model_parallel_size
+                total_num_layers // pipeline_model_pipeline_size
             )
             #### 8-cards hack
             # self_rank = mpu.get_pipeline_model_parallel_rank()
             # offset = 0
             # if modality == "image":
             #     if self_rank == 0:
-            #         num_layers = 14
+            #         num_layers = 12
             #         offset = 0
             #     elif self_rank == 1:
-            #         num_layers = 14
-            #         offset = 14
+            #         num_layers = 12
+            #         offset = 12
             #     elif self_rank == 2:
-            #         num_layers = 14
-            #         offset = 28
+            #         num_layers = 16
+            #         offset = 24
             #     elif self_rank == 3:
-            #         num_layers = 14
-            #         offset = 42
+            #         num_layers = 16
+            #         offset = 40
             # elif modality == "text":
             #     if self_rank == 0:
-            #         num_layers = 8
+            #         num_layers = 10
             #         offset = 0
             #     elif self_rank == 1:
-            #         num_layers = 8
-            #         offset = 8
+            #         num_layers = 10
+            #         offset = 10
             #     elif self_rank == 2:
-            #         num_layers = 10
-            #         offset = 16
+            #         num_layers = 8
+            #         offset = 20
             #     elif self_rank == 3:
-            #         num_layers = 10
-            #         offset = 26
+            #         num_layers = 8
+            #         offset = 28
             # return (num_layers, offset)
     # 没有流水线并行
     else:
@@ -1656,7 +1661,7 @@ class ParallelTransformer(MegatronModule):
                         # 解码器的偏移需要先减去编码器的进程数再做计算，num_layers是切分后的层数
                         offset = (pipeline_rank - num_ranks_in_enc) * self.num_layers
                 else:
-                    offset = mpu.get_pipeline_model_parallel_rank() * self.num_layers
+                    offset = mpu.get_pipeline_model_parallel_rank(config=config) * self.num_layers
 
         if self.num_layers == 0:
             # When a standalone embedding stage is used (e.g.,

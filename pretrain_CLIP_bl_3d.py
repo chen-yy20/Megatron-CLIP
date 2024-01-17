@@ -30,7 +30,7 @@ from megatron.model import CLIP_model
 
 # load dataset
 from open_CLIP.src.open_clip.factory import get_tokenizer
-from open_CLIP.src.training.data import get_wds_dataset
+from open_CLIP.src.training.data import get_wds_dataset, get_synthetic_dataset
 from megatron.data.vit_dataset import ClassificationTransform
 
 
@@ -43,14 +43,34 @@ def model_provider(pre_process=True, post_process=True):
     print_rank_0('building CLIP model ...')
     text_config = clip_text_transformer_config_from_args(args)
     vision_config = clip_vision_transformer_config_from_args(args)
-
-    model = CLIP_model.CombinedCLIPModel(
-        vision_cfg=vision_config,
-        text_cfg=text_config,
-        pre_process=pre_process,
-        post_process=post_process,
-    )
-    model.to(torch.cuda.current_device())
+    if args.bidirectional_pipeline:
+        # create down pipeline
+        down_model = CLIP_model.CombinedCLIPModel(
+            vision_cfg=vision_config,
+            text_cfg=text_config,
+            pre_process=pre_process,
+            post_process=post_process,
+        )
+        down_model.config.down_or_up = "down"
+        down_model.to(torch.cuda.current_device())
+        # create up pipeline
+        up_model = CLIP_model.CombinedCLIPModel(
+            vision_cfg=vision_config,
+            text_cfg=text_config,
+            pre_process=post_process,
+            post_process=pre_process,
+        )
+        up_model.down_or_up = "up"
+        up_model.to(torch.cuda.current_device())
+        model = [down_model, up_model]
+    else:
+        model = CLIP_model.CombinedCLIPModel(
+            vision_cfg=vision_config,
+            text_cfg=text_config,
+            pre_process=pre_process,
+            post_process=post_process,
+        )
+        model.to(torch.cuda.current_device())
 
     return model
 
@@ -194,6 +214,16 @@ def loss_func(output):
     text_output = output['text']
     combine_vision_output = gather_all_tensors(vision_output, parallel_state.get_pipeline_model_parallel_loss_group())
     combine_text_output = gather_all_tensors(text_output, parallel_state.get_pipeline_model_parallel_loss_group())
+    
+    ## a non-allgather hack to test performance
+    # mbs = args.micro_batch_size
+    # loss_group_size = 4
+    # combine_vision_output = [torch.rand((mbs, 1024)).to(device=torch.cuda.current_device()) for _ in range(loss_group_size)]
+    # combine_text_output = [torch.rand((mbs, 1024)).to(device=torch.cuda.current_device()) for _ in range(loss_group_size)]
+    # self_output_rank = torch.distributed.get_rank(group=parallel_state.get_pipeline_model_parallel_loss_group())
+    # combine_vision_output[self_output_rank] = vision_output
+    # combine_text_output[self_output_rank] = text_output
+    
     # print_rank_all(f"gathered tensor={[t.shape for t in combine_output]}", False)
     # print_rank_all(f"gathered tensor req. gradient={[t.requires_grad for t in combine_output]}", False)
 
@@ -219,7 +249,7 @@ def loss_func(output):
             F.cross_entropy(logits_per_text, labels) +
             F.cross_entropy(logits_per_image, labels)
     ) / 2
-    # print_rank_all(f"total_loss: {total_loss}", False)
+    print_rank_all(f"total_loss: {total_loss}", False)
     
     # averaged_loss = average_losses_across_data_parallel_group([total_loss, accuracy]) 
     
@@ -246,8 +276,9 @@ class DatasetArguments:
         self.train_data_upsampling_factors = None
         self.seed = 1234
         self.batch_size = batch_size # img: 16  text: torch.Size([16, 77])
-        self.workers = 1
+        self.workers = 4
         self.world_size = 1
+        self.distributed = False
         self.model = 'RN50'
 
 def train_valid_test_datasets_provider(train_val_test_num_samples):
@@ -264,7 +295,8 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
     self_micro_batch_size = args.xmicro_batch_size if is_extra_branch_rank() else args.micro_batch_size
     dataset_args = DatasetArguments(self_micro_batch_size)
     data = {}
-    data['train'] = get_wds_dataset(dataset_args, img_transform, True, tokenizer=get_tokenizer(dataset_args.model))
+    # data['train'] = get_wds_dataset(dataset_args, img_transform, True, tokenizer=get_tokenizer(dataset_args.model))
+    data['train'] = get_synthetic_dataset(dataset_args, img_transform, True, tokenizer=get_tokenizer(dataset_args.model))
     train_ds = data['train']
     print_rank_0("> finished creating CLIP datasets ...")
 

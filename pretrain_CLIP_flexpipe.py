@@ -27,10 +27,11 @@ from megatron.arguments import core_transformer_config_from_args, \
 # #     gpt_layer_with_transformer_engine_spec_moe
 # # )
 from megatron.model import CLIP_model
+from megatron.core import parallel_state
 
 # load dataset
 from open_CLIP.src.open_clip.factory import get_tokenizer
-from open_CLIP.src.training.data import get_wds_dataset
+from open_CLIP.src.training.data import get_wds_dataset, get_synthetic_dataset
 from megatron.data.vit_dataset import ClassificationTransform
 
 
@@ -43,12 +44,8 @@ def model_provider(pre_process=True, post_process=True):
     print_rank_0('building CLIP model ...')
     text_config = clip_text_transformer_config_from_args(args)
     vision_config = clip_vision_transformer_config_from_args(args)
-    text_preprocess = False
-    text_postprocess = False
-    if pre_process:
-        text_postprocess = True
-    if post_process:
-        text_preprocess = True
+    # create bidirectional pipeline according to config
+    up_pipe_rank = parallel_state.get_pipeline_model_parallel_rank(config=text_config)
     vision_model = CLIP_model.CLIPVisionModel(
         config=vision_config,
         args=args,
@@ -56,16 +53,28 @@ def model_provider(pre_process=True, post_process=True):
         post_process=post_process,
         image_projection=True,
     ).to("cuda")
-    
-    text_model = CLIP_model.CLIPTextModel(
-        config=text_config,
-        pre_process=text_preprocess,
-        post_process=text_postprocess,
-        add_pooler=True,
-        text_projection=True,
-    ).to("cuda")
+    vision_config.loss_func = loss_func
 
-    print_rank_all(f"create models with model_provider: {pre_process}, {post_process}, {text_preprocess}, {text_postprocess}")
+    if up_pipe_rank is not None:
+        text_preprocess = False
+        text_postprocess = False
+        if up_pipe_rank == 0:
+            text_preprocess = True
+        if up_pipe_rank == args.bidirectional_pipeline_size - 1:
+            text_postprocess = True
+        text_model = CLIP_model.CLIPTextModel(
+            config=text_config,
+            pre_process=text_preprocess,
+            post_process=text_postprocess,
+            add_pooler=True,
+            text_projection=True,
+        ).to("cuda")
+    else:
+        # this rank doesn't have text stage
+        text_model = torch.nn.Module()
+        text_model.config = text_config
+        text_model.config.empty_flag = True
+    text_model.loss_func = loss_func
     return [vision_model, text_model]
 
 
@@ -202,9 +211,17 @@ def loss_func(output):
         output_tensor (Tensor): The tensor with the losses
     """    
     args = get_args()
-    # print_rank_all(f"loss_func get output:{output.shape}", False)
+    print_rank_all(f"loss_func get output:{output.shape}", False)
     assert parallel_state.get_tensor_model_parallel_world_size() == 1, "not support tp now."
-    combine_output = gather_all_tensors(output, parallel_state.get_pipeline_model_parallel_loss_group())
+    # combine_output = gather_all_tensors(output, parallel_state.get_pipeline_model_parallel_loss_group())
+    ### avoid allgather to see performance
+    mbs = args.micro_batch_size
+    loss_group_size = 4
+    combine_output = [torch.rand((mbs, 1024)).to(device=torch.cuda.current_device()) for _ in range(loss_group_size)]
+    self_output_rank = torch.distributed.get_rank(group=parallel_state.get_pipeline_model_parallel_loss_group())
+    combine_output[self_output_rank] = output
+    ###
+    
     # print_rank_all(f"gathered tensor={[t.shape for t in combine_output]}", False)
     # print_rank_all(f"gathered tensor req. gradient={[t.requires_grad for t in combine_output]}", False)
     # fisrt half is text output and latter half is image output
@@ -261,8 +278,9 @@ class DatasetArguments:
         self.train_data_upsampling_factors = None
         self.seed = 1234
         self.batch_size = batch_size # img: 16  text: torch.Size([16, 77])
-        self.workers = 1
+        self.workers = 4
         self.world_size = 1
+        self.distributed = False
         self.model = 'RN50'
 
 def train_valid_test_datasets_provider(train_val_test_num_samples):
@@ -279,7 +297,8 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
     self_micro_batch_size = args.xmicro_batch_size if is_extra_branch_rank() else args.micro_batch_size
     dataset_args = DatasetArguments(self_micro_batch_size)
     data = {}
-    data['train'] = get_wds_dataset(dataset_args, img_transform, True, tokenizer=get_tokenizer(dataset_args.model))
+    # data['train'] = get_wds_dataset(dataset_args, img_transform, True, tokenizer=get_tokenizer(dataset_args.model))
+    data['train'] = get_synthetic_dataset(dataset_args, img_transform, True, tokenizer=get_tokenizer(dataset_args.model))
     train_ds = data['train']
     print_rank_0("> finished creating CLIP datasets ...")
 

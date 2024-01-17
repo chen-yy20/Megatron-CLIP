@@ -439,19 +439,25 @@ def train_step(forward_step_func, data_iterator,
 
     # Forward pass.
     # interleaving or not => fw/bw func
-    if args.uniform_modility:
+    self_micro_batch_size = args.micro_batch_size
+    self_seq_length = [args.v_seq_length, args.seq_length]
+    if args.uniform_modility and not args.bidirectional_pipeline:
         # Normally distributed each modality to each stage.
-        self_micro_batch_size = args.micro_batch_size
-        self_seq_length = [args.v_seq_length, args.seq_length]
         from megatron.core.pipeline_parallel.flex_schedules import \
             uniform_forward_backward_pipelining_without_interleaving
         forward_backward_func = uniform_forward_backward_pipelining_without_interleaving
-    elif args.bidirectional_pipeline is True:
-        self_micro_batch_size = args.micro_batch_size
-        self_seq_length = [args.v_seq_length, args.seq_length]
+    elif args.uniform_modility and args.bidirectional_pipeline:
+        # Uniform modality + chimera pipeline schedule
         from megatron.core.pipeline_parallel.flex_schedules import \
-            forward_backward_bidirectional_pipelining
-        forward_backward_func = forward_backward_bidirectional_pipelining
+            forward_backward_uniform_bidirectional_pipelining
+        forward_backward_func = forward_backward_uniform_bidirectional_pipelining
+    elif args.bidirectional_pipeline:
+        from megatron.core.pipeline_parallel.flex_schedules import \
+            forward_backward_bidirectional_pipelining, forward_backward_flex_bidirectional_pipelining
+        # # bidirection different modalities with chimera schedule
+        # forward_backward_func = forward_backward_bidirectional_pipelining
+        # # bidirection with flex schedule
+        forward_backward_func = forward_backward_flex_bidirectional_pipelining
     elif mpu.has_extra_branch():
         # Divid multimodal branches into different devices.
         self_micro_batch_size = args.xmicro_batch_size if mpu.is_extra_branch_rank() else \

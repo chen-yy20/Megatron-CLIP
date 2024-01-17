@@ -1,20 +1,4 @@
 """Adapted from https://github.com/Shigangli/Chimera"""
-from enum import Enum, auto
-
-class PPOps(Enum):
-    forward = auto()
-    backward = auto()
-    send_forward = auto()
-    recv_forward = auto()
-    send_backward = auto()
-    recv_backward = auto()
-    synchronize = auto()
-    
-class PipelineInstruct():
-    def __init__(self, op_type, model_chunk_id=None, up_or_down=None) -> None:
-        self.op_type = op_type
-        self.model_chunk_id = model_chunk_id
-        self.up_or_down = up_or_down
 
 class AutoGeneratePipelineRank:
 
@@ -125,43 +109,6 @@ class AutoGeneratePipelineRank:
             if is_iteration and has_next_flag:
                 yield sub_schedule
                 
-    def get_exec_schedule(self, self_stage_id, warm_up_batches):
-        """Computation schedules of bidirectional pipeline cannot be launched in order,
-        because the opposite send ops will block the schedule. We rearrange the order
-        to make the op list can execute one-by-one.
-        """
-        
-        schedule_pipeline = self.get_schedule(True)
-        pipeline_schedule = []
-        for sub_schedule in schedule_pipeline:
-            pipeline_schedule.append(sub_schedule)
-        local_device_ops = []
-        
-        def is_cross(current_sched, next_sched):
-            current_sched
-            
-        for batch_id, sub_schedule in enumerate(pipeline_schedule):
-            if sub_schedule[self_stage_id] != '':
-                index, up_down, forward_backward = sub_schedule[self_stage_id].split("@")
-                index = int(index) # model index located in self device
-                
-                # if batch_id < warm_up_batches:
-                #     # warmup phase
-                #     assert forward_backward == 'f'
-                #     local_device_ops.append(PipelineInstruct(PPOps.forward, index, up_down))
-                #     local_device_ops.append(PipelineInstruct(PPOps.send_forward, index, up_down))
-        
-                    # up pipeline delay send
-                if forward_backward == 'f':
-                    local_device_ops.append(PipelineInstruct(PPOps.recv_forward, index, up_down))
-                    local_device_ops.append(PipelineInstruct(PPOps.forward, index, up_down))
-                    local_device_ops.append(PipelineInstruct(PPOps.send_forward, index, up_down))
-                if forward_backward == 'b':
-                    local_device_ops.append(PipelineInstruct(PPOps.recv_backward, index, up_down))
-                    local_device_ops.append(PipelineInstruct(PPOps.backward, index, up_down))
-                    local_device_ops.append(PipelineInstruct(PPOps.send_backward, index, up_down))
-                if forward_backward == 's':
-                    local_device_ops.append(PipelineInstruct(PPOps.synchronize, index, up_down))
                 
 
 class MyPipeLine:
@@ -236,11 +183,19 @@ class MyPipeLine:
 
 # ##########################测试用
 def forward(index, up_or_down):
-    print(f"forward {index}:{up_or_down}")
+    if up_or_down == "up":
+        modal = "text"
+    else:
+        modal = "vision"
+    print(f"{modal} forward")
 
 
 def backward(index, up_or_down):
-    print(f"backward {index}:{up_or_down}")
+    if up_or_down == "up":
+        modal = "text"
+    else:
+        modal = "vision"
+    print(f"{modal} backward")
 
 
 if __name__ == "__main__":
@@ -257,7 +212,7 @@ if __name__ == "__main__":
     for sub_schedule in schedule_pipeline:
         pipeline_schedule.append(sub_schedule)
     cout = 0
-    stage_model_id = 0
+    stage_model_id = 3
     print(f"print stage_model_id: {stage_model_id}")
     # execute instructions
     for sub_schedule in pipeline_schedule:

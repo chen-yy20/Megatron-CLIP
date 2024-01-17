@@ -6,15 +6,15 @@ export VISION_L=56
 export TEXT_L=36
 
 # nico config
-export GPUS_PER_NODE='8'
-export NODELIST='nico[2]'
+export GPUS_PER_NODE='4'
+export NODELIST='nico[1]'
 PARTITION='Big'
 
 export NNODES=$(scontrol show hostnames ${NODELIST} | wc -l)
 export WORLD_SIZE=$(($GPUS_PER_NODE*$NNODES))
 
 # Batch size
-export GLOBAL_BATCH_SIZE=192
+export GLOBAL_BATCH_SIZE=64
 export MICRO_BATCHES=8
 export TRAIN_SAMPLES=$(( $GLOBAL_BATCH_SIZE * 10)) 
 
@@ -27,20 +27,20 @@ export LOG='0'
 export LOG_LEVEL=0 # [0,1,2]
 
 # Training mode
-export TRAINING_MODE='4' # 0:独立模态 1:混合模态 2:纯DP 3:ZeRO 4: 双向混合流水线
+export TRAINING_MODE='4' # 0:独立模态 1:混合模态 2:纯DP 3:ZeRO 4: 双向混合流水线 5:混合模态+Chimera双向
 
 export extra_args=""
 
 if [ $TRAINING_MODE == '0' ]; then
     export EXP_NAME='Indep'
 
-    export EXTRA_WORLD_SIZE=4
+    export EXTRA_WORLD_SIZE=1
 
     export TENSOR_MODEL_PARALLEL=1
-    export PIPELINE_MODEL_PARALLEL=2
+    export PIPELINE_MODEL_PARALLEL=3
 
     export XTENSOR_MODEL_PARALLEL=1
-    export XPIPELINE_MODEL_PARALLEL=2
+    export XPIPELINE_MODEL_PARALLEL=1
 
     if [ $EXTRA_WORLD_SIZE -ge $WORLD_SIZE ]; then
         echo "Error: EXTRA_WORLD_SIZE must be less than WORLD_SIZE."
@@ -74,7 +74,7 @@ if [ $TRAINING_MODE == '0' ]; then
     LOG_DIR=${EXP_NAME}\_TP$TENSOR_MODEL_PARALLEL\_PP$PIPELINE_MODEL_PARALLEL\_DP$DATA_PARALLEL_SIZE\_XTP$XTENSOR_MODEL_PARALLEL\_XPP$XPIPELINE_MODEL_PARALLEL\_XDP$XDATA_PARALLEL_SIZE\_gbs$GLOBAL_BATCH_SIZE\_mbs$MICRO_BATCH_SIZE\_xmbs$XMICRO_BATCH_SIZE
     LOG_NAME=${MODEL_NAME}\_tL$TEXT_L\_vL$VISION_L\_#mb$MICRO_BATCHES\_$(date -Iseconds).log 
 
-elif [ $TRAINING_MODE == '1' ]; then
+elif [[ $TRAINING_MODE == '1' || $TRAINING_MODE == '5' ]]; then
     export EXP_NAME='Mix'
     export TENSOR_MODEL_PARALLEL=1
     export PIPELINE_MODEL_PARALLEL=4
@@ -90,6 +90,10 @@ elif [ $TRAINING_MODE == '1' ]; then
     LOG_DIR=${EXP_NAME}\_TP$TENSOR_MODEL_PARALLEL\_PP$PIPELINE_MODEL_PARALLEL\_DP$DATA_PARALLEL_SIZE\_gbs$GLOBAL_BATCH_SIZE\_mbs$MICRO_BATCH_SIZE
     LOG_NAME=${MODEL_NAME}\_tL$TEXT_L\_vL$VISION_L\_mbs$MICRO_BATCH_SIZE\_$(date -Iseconds).log
     extra_args=" --uniform-modility ${extra_args}"
+    if [ $TRAINING_MODE == '5' ]; then
+        extra_args=" --bidirectional-pipeline-size 4 ${extra_args}"
+        extra_args=" --bidirectional-pipeline ${extra_args}"
+    fi
 
 elif [ $TRAINING_MODE == '2' ]; then
     export EXP_NAME='PureDP'
@@ -129,6 +133,7 @@ elif [ $TRAINING_MODE == '4' ]; then
     export MICRO_BATCH_SIZE=$(expr $GLOBAL_BATCH_SIZE / $(($DATA_PARALLEL_SIZE*$MICRO_BATCHES)))
     LOG_DIR=${EXP_NAME}\_TP$TENSOR_MODEL_PARALLEL\_PP$PIPELINE_MODEL_PARALLEL\_DP$DATA_PARALLEL_SIZE\_gbs$GLOBAL_BATCH_SIZE\_mbs$MICRO_BATCH_SIZE
     LOG_NAME=${MODEL_NAME}\_tL$TEXT_L\_vL$VISION_L\_mbs$MICRO_BATCH_SIZE\_$(date -Iseconds).log
+    extra_args=" --bidirectional-pipeline-size 4 ${extra_args}"
     extra_args=" --bidirectional-pipeline ${extra_args}"
 fi
 
@@ -158,7 +163,7 @@ if [ $LOG == '1' ]; then
         --export=ALL \
         bash ./zPretrain/pretrain_clip_e.sh > ./logs/$LOG_DIR/$LOG_NAME 2>&1
 
-    elif [ $TRAINING_MODE == '1' ]; then
+    elif [[ $TRAINING_MODE == '1' || $TRAINING_MODE == '5' ]]; then
         srun \
         --exclusive=user \
         -p $PARTITION \
@@ -215,7 +220,7 @@ elif [ $LOG == '0' ]; then
         --export=ALL \
         bash ./zPretrain/pretrain_clip_e.sh
 
-    elif [ $TRAINING_MODE == '1' ]; then
+    elif [[ $TRAINING_MODE == '1' || $TRAINING_MODE == '5' ]]; then
         srun \
         --exclusive=user \
         -p $PARTITION \

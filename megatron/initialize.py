@@ -220,7 +220,8 @@ def _initialize_distributed():
                 xtensor_model_parallel_size = args.xtensor_model_parallel_size,
                 xpipeline_model_parallel_size = args.xpipeline_model_parallel_size,
                 expert_model_parallel_size=args.expert_model_parallel_size,
-                bidirectional_pipeline=args.bidirectional_pipeline
+                bidirectional_pipeline=args.bidirectional_pipeline,
+                bidirectional_pipeline_size=args.bidirectional_pipeline_size
             )
             if args.rank == 0:
                 print(

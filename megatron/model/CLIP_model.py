@@ -320,8 +320,14 @@ class CombinedCLIPModel(MegatronModule):
         image_tokens = combine_input['image']
         text_tokens = combine_input['text']
         # image_token: torch.float32, text_tokens: torch.int32
+        from megatron.tprofiler import see_memory_usage
+        rank = torch.distributed.get_rank()
+        # if rank == 0:
+        #     see_memory_usage("before visual")
         image_features = self.visual(image_tokens)
+        # if rank == 0:
+        #     see_memory_usage("after visual")
         text_features = self.text(text_tokens)
-        from megatron import print_rank_all
-        # print_rank_all(f"image_features: {image_features.shape}, text_features: {text_features.shape}")
+        # if rank == 0:
+        #     see_memory_usage("after text")
         return {'image':image_features, 'text':text_features}

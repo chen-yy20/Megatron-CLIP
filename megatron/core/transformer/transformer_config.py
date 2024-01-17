@@ -161,6 +161,8 @@ class TransformerConfig(ModelParallelConfig):
     # communication
     # pipeline direction
     down_or_up: str = 'down'
+    bidirectional_pipeline_size: int = 1
+    empty_flag: bool = False
     
     # fusion
     bias_gelu_fusion: bool = False  # TODO: this should be bias_activation_fusion ?
